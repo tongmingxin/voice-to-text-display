@@ -14,6 +14,7 @@
 
   // --- 状态 ---
   var isRecording = false;
+  var pendingFinalize = false;
   var recognition = null;
   var hasText = false;
 
@@ -23,7 +24,7 @@
 
   // 字体大小（vw 单位）
   var FONT_SIZES = [5, 6, 7, 8, 10, 12, 14];
-  var fontIndex = 3; // 默认 8vw
+  var fontIndex = 3;
 
   // --- 兼容性检查 ---
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -32,10 +33,9 @@
     return;
   }
 
-  // --- 应用字体大小 ---
+  // --- 字体大小 ---
   function applyFontSize() {
-    var size = FONT_SIZES[fontIndex];
-    textContent.style.fontSize = size + 'vw';
+    textContent.style.fontSize = FONT_SIZES[fontIndex] + 'vw';
   }
   applyFontSize();
 
@@ -43,7 +43,7 @@
     if (fontIndex < FONT_SIZES.length - 1) {
       fontIndex++;
       applyFontSize();
-      showToast('字体: ' + FONT_SIZES[fontIndex] + 'vw');
+      showToast('字体已放大');
     }
   });
 
@@ -51,7 +51,7 @@
     if (fontIndex > 0) {
       fontIndex--;
       applyFontSize();
-      showToast('字体: ' + FONT_SIZES[fontIndex] + 'vw');
+      showToast('字体已缩小');
     }
   });
 
@@ -68,8 +68,9 @@
     return rec;
   }
 
+  // 结果处理：不管是否正在录音，只要 session 还没 finalize 就继续接收
   function onResult(event) {
-    if (!isRecording) return;
+    if (!isRecording && !pendingFinalize) return;
 
     var finals = '';
     var interims = '';
@@ -91,18 +92,42 @@
   }
 
   function onError(event) {
+    var msg = '';
     if (event.error === 'not-allowed') {
-      showToast('请允许使用麦克风权限');
+      msg = '请允许使用麦克风权限';
     } else if (event.error === 'no-speech') {
-      showToast('未检测到语音，请重试');
+      msg = '未检测到语音，请重试';
     } else if (event.error === 'network') {
-      showToast('网络错误，请检查网络');
+      msg = '无法连接语音服务，请检查网络';
+    } else if (event.error === 'service-not-allowed') {
+      msg = '语音服务不可用，请换用 Safari(iPhone) 或 Chrome 浏览器';
+    } else if (event.error === 'audio-capture') {
+      msg = '无法录音，请检查麦克风';
     }
+    if (msg) showToast(msg);
   }
 
+  // 识别引擎结束时：做最终 finalize
   function onEnd() {
-    if (isRecording) {
-      finishRecording();
+    if (pendingFinalize) {
+      pendingFinalize = false;
+      finalizeSession();
+      recognition = null;
+
+      if (!hasText) {
+        showToast('未检测到语音，请重试');
+      }
+    } else if (isRecording) {
+      // 引擎意外停止（网络中断、超时等）
+      isRecording = false;
+      finalizeSession();
+      recognition = null;
+      talkBtn.classList.remove('recording');
+      talkBtn.querySelector('.btn-text').textContent = '长按说话';
+
+      if (!hasText) {
+        showToast('识别中断，请重试');
+      }
     }
   }
 
@@ -158,6 +183,7 @@
   function startRecording() {
     if (isRecording) return;
     isRecording = true;
+    pendingFinalize = false;
     sessionFinal = '';
     sessionInterim = '';
 
@@ -175,24 +201,34 @@
     }
   }
 
+  // 松手时：设置 pendingFinalize，调用 stop() 让引擎返回最终结果
+  // 真正的 finalize 在 onEnd 中执行，确保不丢失任何识别结果
   function finishRecording() {
     if (!isRecording) return;
     isRecording = false;
-
-    // abort() 立即停止，不会再触发 onresult
-    if (recognition) {
-      try { recognition.abort(); } catch (e) {}
-      recognition = null;
-    }
-
-    finalizeSession();
+    pendingFinalize = true;
 
     talkBtn.classList.remove('recording');
     talkBtn.querySelector('.btn-text').textContent = '长按说话';
 
-    if (!hasText) {
-      showToast('未检测到语音，请重试');
+    if (recognition) {
+      try { recognition.stop(); } catch (e) {}
     }
+
+    // 安全超时：如果 onEnd 5秒内没触发，强制 finalize
+    setTimeout(function () {
+      if (pendingFinalize) {
+        pendingFinalize = false;
+        finalizeSession();
+        if (recognition) {
+          try { recognition.abort(); } catch (e) {}
+          recognition = null;
+        }
+        if (!hasText) {
+          showToast('识别超时，请重试');
+        }
+      }
+    }, 5000);
   }
 
   // --- 按钮事件 ---
@@ -246,15 +282,15 @@
       t = document.createElement('div');
       t.id = 'toast';
       t.style.cssText = 'position:fixed;bottom:18%;left:50%;transform:translateX(-50%);' +
-        'background:rgba(0,0,0,0.8);color:#fff;padding:10px 20px;border-radius:20px;' +
+        'background:rgba(0,0,0,0.85);color:#fff;padding:10px 20px;border-radius:20px;' +
         'font-size:0.9rem;z-index:9999;transition:opacity 0.3s;pointer-events:none;' +
-        'white-space:nowrap;';
+        'max-width:85vw;text-align:center;';
       document.body.appendChild(t);
     }
     t.textContent = msg;
     t.style.opacity = '1';
     clearTimeout(t._tm);
-    t._tm = setTimeout(function () { t.style.opacity = '0'; }, 2000);
+    t._tm = setTimeout(function () { t.style.opacity = '0'; }, 2500);
   }
 
   document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
