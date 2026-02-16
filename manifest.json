@@ -1,0 +1,17 @@
+{
+  "name": "语音转大字 - 听障沟通辅助",
+  "short_name": "语音转大字",
+  "description": "长按说话，语音识别后横屏全屏大字显示，方便与听障人士沟通",
+  "start_url": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1a1a2e",
+  "theme_color": "#1a1a2e",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎤</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
