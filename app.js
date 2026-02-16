@@ -27,7 +27,7 @@
   let recognition = null;
   let hasText = false;
   let toolbarTimer = null;
-  let firstEntry = true;
+  let pendingStop = false;
 
   // --- 浏览器兼容性检查 ---
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -79,7 +79,11 @@
     console.warn('语音识别错误:', event.error);
 
     if (event.error === 'not-allowed') {
-      alert('请允许使用麦克风权限，才能进行语音识别。');
+      showToast('请允许使用麦克风权限');
+    } else if (event.error === 'no-speech') {
+      showToast('未检测到语音，请重试');
+    } else if (event.error === 'network') {
+      showToast('网络连接失败，请检查网络');
     }
 
     stopRecording();
@@ -88,6 +92,13 @@
   function handleEnd() {
     if (isRecording) {
       stopRecording();
+    }
+
+    if (pendingStop) {
+      pendingStop = false;
+      if (!isLandscapeMode && hasText) {
+        enterLandscapeMode();
+      }
     }
   }
 
@@ -183,16 +194,13 @@
     removeInterimElement();
 
     if (recognition) {
+      pendingStop = true;
       try {
         recognition.stop();
       } catch (e) {
-        // 忽略
+        pendingStop = false;
       }
       recognition = null;
-    }
-
-    if (!isLandscapeMode && hasText) {
-      enterLandscapeMode();
     }
   }
 
@@ -399,6 +407,23 @@
     clearText();
     showToolbar();
   });
+
+  // --- Toast 提示 ---
+  function showToast(message) {
+    let toast = document.getElementById('toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'toast';
+      toast.style.cssText = 'position:fixed;bottom:20%;left:50%;transform:translateX(-50%);' +
+        'background:rgba(0,0,0,0.8);color:#fff;padding:12px 24px;border-radius:25px;' +
+        'font-size:1rem;z-index:9999;transition:opacity 0.3s;pointer-events:none;';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.style.opacity = '1';
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => { toast.style.opacity = '0'; }, 2500);
+  }
 
   // --- 阻止页面默认手势 ---
   document.addEventListener('gesturestart', (e) => e.preventDefault());
