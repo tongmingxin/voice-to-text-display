@@ -463,7 +463,23 @@ body {
 }
 
 /* ============================================
-   横屏适配
+   CSS 强制横屏（兼容 iOS 等不支持 orientation.lock 的设备）
+   ============================================ */
+.landscape-mode.force-landscape {
+  width: 100vh;
+  height: 100vw;
+  transform-origin: top left;
+  transform: rotate(90deg) translateY(-100%);
+}
+
+/* 强制横屏时录音覆盖层也需要适配 */
+.landscape-mode.force-landscape .recording-overlay {
+  width: 100vh;
+  height: 100vw;
+}
+
+/* ============================================
+   横屏适配（原生横屏或 CSS 强制横屏后）
    ============================================ */
 @media (orientation: landscape) {
   .text-content .text-line {
@@ -473,6 +489,15 @@ body {
   .placeholder-text {
     font-size: 4vh;
   }
+}
+
+/* 强制横屏时字体大小（此时 vw/vh 还是竖屏的值，需要反转） */
+.force-landscape .text-content .text-line {
+  font-size: 7vw;
+}
+
+.force-landscape .placeholder-text {
+  font-size: 4vw;
 }
 
 /* 小屏幕竖屏适配 */

@@ -6,31 +6,34 @@
   'use strict';
 
   // --- DOM 元素 ---
-  const portraitMode = document.getElementById('portraitMode');
-  const landscapeMode = document.getElementById('landscapeMode');
-  const portraitTalkBtn = document.getElementById('portraitTalkBtn');
-  const landscapeTalkBtn = document.getElementById('landscapeTalkBtn');
-  const textContent = document.getElementById('textContent');
-  const textDisplay = document.getElementById('textDisplay');
-  const toolbar = document.getElementById('toolbar');
-  const exitBtn = document.getElementById('exitBtn');
-  const clearBtn = document.getElementById('clearBtn');
-  const recordingOverlay = document.getElementById('recordingOverlay');
-  const unsupportedModal = document.getElementById('unsupportedModal');
-  const portraitLangSwitch = document.getElementById('portraitLangSwitch');
-  const landscapeLangSwitch = document.getElementById('landscapeLangSwitch');
+  var portraitMode = document.getElementById('portraitMode');
+  var landscapeMode = document.getElementById('landscapeMode');
+  var portraitTalkBtn = document.getElementById('portraitTalkBtn');
+  var landscapeTalkBtn = document.getElementById('landscapeTalkBtn');
+  var textContent = document.getElementById('textContent');
+  var textDisplay = document.getElementById('textDisplay');
+  var toolbar = document.getElementById('toolbar');
+  var exitBtn = document.getElementById('exitBtn');
+  var clearBtn = document.getElementById('clearBtn');
+  var recordingOverlay = document.getElementById('recordingOverlay');
+  var unsupportedModal = document.getElementById('unsupportedModal');
+  var portraitLangSwitch = document.getElementById('portraitLangSwitch');
+  var landscapeLangSwitch = document.getElementById('landscapeLangSwitch');
 
   // --- 状态 ---
-  let currentLang = 'zh-CN';
-  let isRecording = false;
-  let isLandscapeMode = false;
-  let recognition = null;
-  let hasText = false;
-  let toolbarTimer = null;
-  let lastInterimText = '';
+  var currentLang = 'zh-CN';
+  var isRecording = false;
+  var isLandscapeMode = false;
+  var recognition = null;
+  var hasText = false;
+  var toolbarTimer = null;
+
+  // 每次录音会话的文字累积
+  var sessionFinalText = '';
+  var sessionInterimText = '';
 
   // --- 浏览器兼容性检查 ---
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   if (!SpeechRecognition) {
     unsupportedModal.classList.remove('hidden');
@@ -39,7 +42,7 @@
 
   // --- 初始化语音识别 ---
   function createRecognition() {
-    const rec = new SpeechRecognition();
+    var rec = new SpeechRecognition();
     rec.lang = currentLang;
     rec.interimResults = true;
     rec.continuous = true;
@@ -48,36 +51,29 @@
     rec.onresult = handleResult;
     rec.onerror = handleError;
     rec.onend = handleEnd;
-    rec.onaudiostart = function () {
-      console.log('[语音] 麦克风已开始采集音频');
-    };
 
     return rec;
   }
 
   // --- 语音识别结果处理 ---
+  // continuous 模式下，遍历所有 results 重新拼接，确保文字不丢失
   function handleResult(event) {
-    let interimTranscript = '';
-    let finalTranscript = '';
+    var finalText = '';
+    var interimText = '';
 
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const transcript = event.results[i][0].transcript;
+    for (var i = 0; i < event.results.length; i++) {
       if (event.results[i].isFinal) {
-        finalTranscript += transcript;
+        finalText += event.results[i][0].transcript;
       } else {
-        interimTranscript += transcript;
+        interimText += event.results[i][0].transcript;
       }
     }
 
-    if (finalTranscript) {
-      appendFinalText(finalTranscript);
-      lastInterimText = '';
-    }
+    sessionFinalText = finalText;
+    sessionInterimText = interimText;
 
-    if (interimTranscript) {
-      lastInterimText = interimTranscript;
-      showInterimText(interimTranscript);
-    }
+    // 实时更新当前会话的显示（只用一个元素）
+    updateSessionLine(sessionFinalText + sessionInterimText, interimText.length > 0);
   }
 
   function handleError(event) {
@@ -91,67 +87,76 @@
       showToast('网络连接失败，请检查网络');
     } else if (event.error === 'aborted') {
       // 用户主动停止，不提示
-    } else {
-      showToast('识别出错: ' + event.error);
     }
   }
 
   function handleEnd() {
-    console.log('[语音] 识别结束, isRecording:', isRecording);
+    console.log('[语音] 识别引擎结束, isRecording:', isRecording);
 
     if (isRecording) {
-      // 识别引擎意外结束（比如超时），保存中间结果并完成
       finishRecording();
     }
   }
 
   // --- 文字显示 ---
   function clearPlaceholder() {
-    const placeholder = textContent.querySelector('.placeholder-text');
+    var placeholder = textContent.querySelector('.placeholder-text');
     if (placeholder) {
       placeholder.remove();
     }
   }
 
-  function appendFinalText(text) {
-    if (!text || !text.trim()) return;
-
+  // 更新当前录音会话的实时显示行（始终只有一个元素）
+  function updateSessionLine(text, isInterim) {
+    if (!text) return;
     clearPlaceholder();
-    hasText = true;
 
-    removeInterimElement();
+    var el = textContent.querySelector('.session-line');
+    if (!el) {
+      el = document.createElement('p');
+      el.className = 'text-line session-line';
+      textContent.appendChild(el);
+    }
 
-    const p = document.createElement('p');
-    p.className = 'text-line';
-    p.textContent = text;
-    textContent.appendChild(p);
+    el.textContent = text;
+
+    if (isInterim) {
+      el.classList.add('interim');
+    } else {
+      el.classList.remove('interim');
+    }
 
     scrollToBottom();
   }
 
-  function showInterimText(text) {
-    clearPlaceholder();
+  // 将当前会话行固化为历史行
+  function finalizeSessionLine() {
+    var fullText = (sessionFinalText + sessionInterimText).trim();
 
-    let interimEl = textContent.querySelector('.text-line.interim');
-    if (!interimEl) {
-      interimEl = document.createElement('p');
-      interimEl.className = 'text-line interim';
-      textContent.appendChild(interimEl);
+    // 移除会话行
+    var sessionEl = textContent.querySelector('.session-line');
+    if (sessionEl) {
+      sessionEl.remove();
     }
-    interimEl.textContent = text;
 
-    scrollToBottom();
-  }
+    if (fullText) {
+      clearPlaceholder();
+      hasText = true;
 
-  function removeInterimElement() {
-    const interimEl = textContent.querySelector('.text-line.interim');
-    if (interimEl) {
-      interimEl.remove();
+      var p = document.createElement('p');
+      p.className = 'text-line';
+      p.textContent = fullText;
+      textContent.appendChild(p);
+
+      scrollToBottom();
     }
+
+    sessionFinalText = '';
+    sessionInterimText = '';
   }
 
   function scrollToBottom() {
-    requestAnimationFrame(() => {
+    requestAnimationFrame(function () {
       textDisplay.scrollTop = textDisplay.scrollHeight;
     });
   }
@@ -166,7 +171,8 @@
     if (isRecording) return;
 
     isRecording = true;
-    lastInterimText = '';
+    sessionFinalText = '';
+    sessionInterimText = '';
     talkBtn.classList.add('recording');
     talkBtn.querySelector('.btn-text').textContent = '松开结束';
 
@@ -179,7 +185,6 @@
 
     try {
       recognition.start();
-      console.log('[语音] 开始识别, 语言:', currentLang);
     } catch (e) {
       console.warn('[语音] 启动识别失败:', e);
       isRecording = false;
@@ -192,29 +197,20 @@
     if (!isRecording) return;
 
     isRecording = false;
-    console.log('[语音] 完成录音, lastInterimText:', lastInterimText, 'hasText:', hasText);
 
-    // 如果有未确认的中间结果，将其保存为最终文字
-    if (lastInterimText) {
-      appendFinalText(lastInterimText);
-      lastInterimText = '';
-    }
+    // 将当前会话文字固化
+    finalizeSessionLine();
 
-    removeInterimElement();
     resetButtonUI();
     recordingOverlay.classList.add('hidden');
 
     // 停止识别引擎
     if (recognition) {
-      try {
-        recognition.stop();
-      } catch (e) {
-        // 可能已经停了
-      }
+      try { recognition.stop(); } catch (e) {}
       recognition = null;
     }
 
-    // 切换模式
+    // 切换到展示模式
     if (!isLandscapeMode && hasText) {
       enterLandscapeMode();
     } else if (!hasText) {
@@ -235,7 +231,12 @@
     portraitMode.classList.add('hidden');
     landscapeMode.classList.remove('hidden');
 
-    enterFullscreen();
+    // 尝试原生全屏 + 横屏锁定
+    tryFullscreenAndLock();
+
+    // CSS 强制横屏（作为兜底，所有设备都生效）
+    applyForceLandscape();
+
     startToolbarAutoHide();
   }
 
@@ -244,19 +245,41 @@
     landscapeMode.classList.add('hidden');
     portraitMode.classList.remove('hidden');
 
-    exitFullscreen();
+    removeForceLandscape();
+    tryExitFullscreen();
     clearToolbarTimer();
   }
 
-  // --- 全屏控制 ---
-  function enterFullscreen() {
-    const el = document.documentElement;
+  // --- CSS 强制横屏 ---
+  function applyForceLandscape() {
+    // 检测当前是否竖屏
+    if (window.innerHeight > window.innerWidth) {
+      landscapeMode.classList.add('force-landscape');
+    }
 
-    const requestFS =
-      el.requestFullscreen ||
-      el.webkitRequestFullscreen ||
-      el.mozRequestFullScreen ||
-      el.msRequestFullscreen;
+    // 监听屏幕旋转，动态调整
+    window.addEventListener('resize', onResizeForLandscape);
+  }
+
+  function removeForceLandscape() {
+    landscapeMode.classList.remove('force-landscape');
+    window.removeEventListener('resize', onResizeForLandscape);
+  }
+
+  function onResizeForLandscape() {
+    if (!isLandscapeMode) return;
+
+    if (window.innerHeight > window.innerWidth) {
+      landscapeMode.classList.add('force-landscape');
+    } else {
+      landscapeMode.classList.remove('force-landscape');
+    }
+  }
+
+  // --- 全屏控制 ---
+  function tryFullscreenAndLock() {
+    var el = document.documentElement;
+    var requestFS = el.requestFullscreen || el.webkitRequestFullscreen;
 
     if (requestFS) {
       try {
@@ -264,35 +287,22 @@
         if (result && result.then) {
           result.then(function () {
             lockLandscape();
-          }).catch(function () {
-            lockLandscape();
-          });
+          }).catch(function () {});
         }
-      } catch (e) {
-        // 某些浏览器不支持
-      }
+      } catch (e) {}
     }
   }
 
-  function exitFullscreen() {
+  function tryExitFullscreen() {
     var fsElement = document.fullscreenElement || document.webkitFullscreenElement;
     if (!fsElement) return;
 
-    var exitFS =
-      document.exitFullscreen ||
-      document.webkitExitFullscreen ||
-      document.mozCancelFullScreen ||
-      document.msExitFullscreen;
-
+    var exitFS = document.exitFullscreen || document.webkitExitFullscreen;
     if (exitFS) {
       try {
         var result = exitFS.call(document);
-        if (result && result.catch) {
-          result.catch(function () {});
-        }
-      } catch (e) {
-        // 静默
-      }
+        if (result && result.catch) { result.catch(function () {}); }
+      } catch (e) {}
     }
 
     unlockOrientation();
@@ -306,24 +316,19 @@
 
   function unlockOrientation() {
     if (screen.orientation && screen.orientation.unlock) {
-      try {
-        screen.orientation.unlock();
-      } catch (e) {}
+      try { screen.orientation.unlock(); } catch (e) {}
     }
   }
 
-  // 监听全屏状态变化
+  // 全屏状态变化
   document.addEventListener('fullscreenchange', onFullscreenChange);
   document.addEventListener('webkitfullscreenchange', onFullscreenChange);
 
   function onFullscreenChange() {
     var isFS = !!(document.fullscreenElement || document.webkitFullscreenElement);
     if (!isFS && isLandscapeMode) {
-      isLandscapeMode = false;
-      landscapeMode.classList.add('hidden');
-      portraitMode.classList.remove('hidden');
-      clearToolbarTimer();
-      unlockOrientation();
+      // 用户通过系统手势退出全屏时，也退出展示模式
+      exitLandscapeMode();
     }
   }
 
@@ -359,7 +364,6 @@
   // --- 语言切换 ---
   function setLang(lang) {
     currentLang = lang;
-
     document.querySelectorAll('.lang-switch').forEach(function (switchEl) {
       switchEl.querySelectorAll('.lang-btn').forEach(function (btn) {
         btn.classList.toggle('active', btn.dataset.lang === lang);
