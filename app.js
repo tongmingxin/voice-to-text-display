@@ -27,7 +27,7 @@
   let recognition = null;
   let hasText = false;
   let toolbarTimer = null;
-  let pendingStop = false;
+  let lastInterimText = '';
 
   // --- 浏览器兼容性检查 ---
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -42,12 +42,15 @@
     const rec = new SpeechRecognition();
     rec.lang = currentLang;
     rec.interimResults = true;
-    rec.continuous = false;
+    rec.continuous = true;
     rec.maxAlternatives = 1;
 
     rec.onresult = handleResult;
     rec.onerror = handleError;
     rec.onend = handleEnd;
+    rec.onaudiostart = function () {
+      console.log('[语音] 麦克风已开始采集音频');
+    };
 
     return rec;
   }
@@ -68,15 +71,17 @@
 
     if (finalTranscript) {
       appendFinalText(finalTranscript);
+      lastInterimText = '';
     }
 
     if (interimTranscript) {
+      lastInterimText = interimTranscript;
       showInterimText(interimTranscript);
     }
   }
 
   function handleError(event) {
-    console.warn('语音识别错误:', event.error);
+    console.warn('[语音] 识别错误:', event.error);
 
     if (event.error === 'not-allowed') {
       showToast('请允许使用麦克风权限');
@@ -84,21 +89,19 @@
       showToast('未检测到语音，请重试');
     } else if (event.error === 'network') {
       showToast('网络连接失败，请检查网络');
+    } else if (event.error === 'aborted') {
+      // 用户主动停止，不提示
+    } else {
+      showToast('识别出错: ' + event.error);
     }
-
-    stopRecording();
   }
 
   function handleEnd() {
-    if (isRecording) {
-      stopRecording();
-    }
+    console.log('[语音] 识别结束, isRecording:', isRecording);
 
-    if (pendingStop) {
-      pendingStop = false;
-      if (!isLandscapeMode && hasText) {
-        enterLandscapeMode();
-      }
+    if (isRecording) {
+      // 识别引擎意外结束（比如超时），保存中间结果并完成
+      finishRecording();
     }
   }
 
@@ -111,6 +114,8 @@
   }
 
   function appendFinalText(text) {
+    if (!text || !text.trim()) return;
+
     clearPlaceholder();
     hasText = true;
 
@@ -161,6 +166,7 @@
     if (isRecording) return;
 
     isRecording = true;
+    lastInterimText = '';
     talkBtn.classList.add('recording');
     talkBtn.querySelector('.btn-text').textContent = '松开结束';
 
@@ -173,35 +179,54 @@
 
     try {
       recognition.start();
+      console.log('[语音] 开始识别, 语言:', currentLang);
     } catch (e) {
-      console.warn('启动识别失败:', e);
-      stopRecording();
+      console.warn('[语音] 启动识别失败:', e);
+      isRecording = false;
+      resetButtonUI();
+      showToast('启动识别失败，请重试');
     }
   }
 
-  function stopRecording() {
-    if (!isRecording && !recognition) return;
+  function finishRecording() {
+    if (!isRecording) return;
 
     isRecording = false;
+    console.log('[语音] 完成录音, lastInterimText:', lastInterimText, 'hasText:', hasText);
 
+    // 如果有未确认的中间结果，将其保存为最终文字
+    if (lastInterimText) {
+      appendFinalText(lastInterimText);
+      lastInterimText = '';
+    }
+
+    removeInterimElement();
+    resetButtonUI();
+    recordingOverlay.classList.add('hidden');
+
+    // 停止识别引擎
+    if (recognition) {
+      try {
+        recognition.stop();
+      } catch (e) {
+        // 可能已经停了
+      }
+      recognition = null;
+    }
+
+    // 切换模式
+    if (!isLandscapeMode && hasText) {
+      enterLandscapeMode();
+    } else if (!hasText) {
+      showToast('未检测到语音，请重试');
+    }
+  }
+
+  function resetButtonUI() {
     portraitTalkBtn.classList.remove('recording');
     landscapeTalkBtn.classList.remove('recording');
     portraitTalkBtn.querySelector('.btn-text').textContent = '长按说话';
     landscapeTalkBtn.querySelector('.btn-text').textContent = '长按说话';
-
-    recordingOverlay.classList.add('hidden');
-
-    removeInterimElement();
-
-    if (recognition) {
-      pendingStop = true;
-      try {
-        recognition.stop();
-      } catch (e) {
-        pendingStop = false;
-      }
-      recognition = null;
-    }
   }
 
   // --- 模式切换 ---
@@ -234,23 +259,40 @@
       el.msRequestFullscreen;
 
     if (requestFS) {
-      requestFS.call(el).then(() => {
-        lockLandscape();
-      }).catch(() => {
-        lockLandscape();
-      });
+      try {
+        var result = requestFS.call(el);
+        if (result && result.then) {
+          result.then(function () {
+            lockLandscape();
+          }).catch(function () {
+            lockLandscape();
+          });
+        }
+      } catch (e) {
+        // 某些浏览器不支持
+      }
     }
   }
 
   function exitFullscreen() {
-    const exitFS =
+    var fsElement = document.fullscreenElement || document.webkitFullscreenElement;
+    if (!fsElement) return;
+
+    var exitFS =
       document.exitFullscreen ||
       document.webkitExitFullscreen ||
       document.mozCancelFullScreen ||
       document.msExitFullscreen;
 
-    if (exitFS && document.fullscreenElement) {
-      exitFS.call(document).catch(() => {});
+    if (exitFS) {
+      try {
+        var result = exitFS.call(document);
+        if (result && result.catch) {
+          result.catch(function () {});
+        }
+      } catch (e) {
+        // 静默
+      }
     }
 
     unlockOrientation();
@@ -258,9 +300,7 @@
 
   function lockLandscape() {
     if (screen.orientation && screen.orientation.lock) {
-      screen.orientation.lock('landscape').catch(() => {
-        // iOS 等不支持时静默失败
-      });
+      screen.orientation.lock('landscape').catch(function () {});
     }
   }
 
@@ -268,18 +308,16 @@
     if (screen.orientation && screen.orientation.unlock) {
       try {
         screen.orientation.unlock();
-      } catch (e) {
-        // 静默
-      }
+      } catch (e) {}
     }
   }
 
-  // 监听全屏状态变化，用户按返回键退出全屏时同步状态
+  // 监听全屏状态变化
   document.addEventListener('fullscreenchange', onFullscreenChange);
   document.addEventListener('webkitfullscreenchange', onFullscreenChange);
 
   function onFullscreenChange() {
-    const isFS = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    var isFS = !!(document.fullscreenElement || document.webkitFullscreenElement);
     if (!isFS && isLandscapeMode) {
       isLandscapeMode = false;
       landscapeMode.classList.add('hidden');
@@ -293,7 +331,7 @@
   function startToolbarAutoHide() {
     clearToolbarTimer();
     toolbar.classList.remove('fade-out');
-    toolbarTimer = setTimeout(() => {
+    toolbarTimer = setTimeout(function () {
       if (!isRecording) {
         toolbar.classList.add('fade-out');
       }
@@ -312,8 +350,7 @@
     }
   }
 
-  // 点击展示区域时显示工具栏
-  textDisplay.addEventListener('click', () => {
+  textDisplay.addEventListener('click', function () {
     if (isLandscapeMode) {
       showToolbar();
     }
@@ -323,16 +360,16 @@
   function setLang(lang) {
     currentLang = lang;
 
-    document.querySelectorAll('.lang-switch').forEach(switchEl => {
-      switchEl.querySelectorAll('.lang-btn').forEach(btn => {
+    document.querySelectorAll('.lang-switch').forEach(function (switchEl) {
+      switchEl.querySelectorAll('.lang-btn').forEach(function (btn) {
         btn.classList.toggle('active', btn.dataset.lang === lang);
       });
     });
   }
 
   function initLangSwitch(switchEl) {
-    switchEl.querySelectorAll('.lang-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+    switchEl.querySelectorAll('.lang-btn').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
         e.preventDefault();
         setLang(btn.dataset.lang);
       });
@@ -344,53 +381,50 @@
 
   // --- 长按按钮事件绑定 ---
   function bindTalkButton(btn) {
-    let touchStarted = false;
+    var touchStarted = false;
 
-    // 触摸事件（移动端）
-    btn.addEventListener('touchstart', (e) => {
+    btn.addEventListener('touchstart', function (e) {
       e.preventDefault();
       touchStarted = true;
       startRecording(btn);
     }, { passive: false });
 
-    btn.addEventListener('touchend', (e) => {
+    btn.addEventListener('touchend', function (e) {
       e.preventDefault();
       if (touchStarted) {
         touchStarted = false;
-        stopRecording();
+        finishRecording();
       }
     }, { passive: false });
 
-    btn.addEventListener('touchcancel', (e) => {
+    btn.addEventListener('touchcancel', function (e) {
       e.preventDefault();
       if (touchStarted) {
         touchStarted = false;
-        stopRecording();
+        finishRecording();
       }
     }, { passive: false });
 
-    // 鼠标事件（桌面端）
-    btn.addEventListener('mousedown', (e) => {
+    btn.addEventListener('mousedown', function (e) {
       if (touchStarted) return;
       e.preventDefault();
       startRecording(btn);
     });
 
-    btn.addEventListener('mouseup', (e) => {
+    btn.addEventListener('mouseup', function (e) {
       if (touchStarted) return;
       e.preventDefault();
-      stopRecording();
+      finishRecording();
     });
 
-    btn.addEventListener('mouseleave', (e) => {
+    btn.addEventListener('mouseleave', function (e) {
       if (touchStarted) return;
       if (isRecording) {
-        stopRecording();
+        finishRecording();
       }
     });
 
-    // 阻止长按弹出菜单
-    btn.addEventListener('contextmenu', (e) => {
+    btn.addEventListener('contextmenu', function (e) {
       e.preventDefault();
     });
   }
@@ -399,34 +433,35 @@
   bindTalkButton(landscapeTalkBtn);
 
   // --- 工具栏按钮 ---
-  exitBtn.addEventListener('click', () => {
+  exitBtn.addEventListener('click', function () {
     exitLandscapeMode();
   });
 
-  clearBtn.addEventListener('click', () => {
+  clearBtn.addEventListener('click', function () {
     clearText();
     showToolbar();
   });
 
   // --- Toast 提示 ---
   function showToast(message) {
-    let toast = document.getElementById('toast');
+    var toast = document.getElementById('toast');
     if (!toast) {
       toast = document.createElement('div');
       toast.id = 'toast';
       toast.style.cssText = 'position:fixed;bottom:20%;left:50%;transform:translateX(-50%);' +
         'background:rgba(0,0,0,0.8);color:#fff;padding:12px 24px;border-radius:25px;' +
-        'font-size:1rem;z-index:9999;transition:opacity 0.3s;pointer-events:none;';
+        'font-size:1rem;z-index:9999;transition:opacity 0.3s;pointer-events:none;' +
+        'white-space:nowrap;';
       document.body.appendChild(toast);
     }
     toast.textContent = message;
     toast.style.opacity = '1';
     clearTimeout(toast._timer);
-    toast._timer = setTimeout(() => { toast.style.opacity = '0'; }, 2500);
+    toast._timer = setTimeout(function () { toast.style.opacity = '0'; }, 2500);
   }
 
   // --- 阻止页面默认手势 ---
-  document.addEventListener('gesturestart', (e) => e.preventDefault());
-  document.addEventListener('gesturechange', (e) => e.preventDefault());
+  document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
+  document.addEventListener('gesturechange', function (e) { e.preventDefault(); });
 
 })();
