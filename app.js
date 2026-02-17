@@ -67,18 +67,51 @@
     return rec;
   }
 
+  function stripDuplicatedInterim(interimText, finals) {
+    var interim = interimText || '';
+    if (!interim) return '';
+    if (finals.length === 0) return interim;
+
+    var allFinalText = finals.join('');
+    if (allFinalText && interim.indexOf(allFinalText) === 0) {
+      interim = interim.slice(allFinalText.length);
+    } else {
+      var lastFinal = finals[finals.length - 1];
+      if (lastFinal && interim.indexOf(lastFinal) === 0) {
+        interim = interim.slice(lastFinal.length);
+      }
+    }
+    return interim;
+  }
+
   // --- 获取当前会话可显示短句 ---
   function getDisplayParts() {
-    var parts = [];
+    var finals = [];
+    var interim = '';
+
     for (var i = 0; i < sessionSegments.length; i++) {
       var seg = sessionSegments[i];
       if (!seg || !seg.text) continue;
       var p = seg.text.trim();
       if (!p) continue;
-      parts.push({
-        text: p,
-        isFinal: !!seg.isFinal
-      });
+      if (seg.isFinal) {
+        // 连续重复的 final 片段只保留一次，减少“看起来反复改色”的错觉
+        if (finals.length === 0 || finals[finals.length - 1] !== p) {
+          finals.push(p);
+        }
+      } else {
+        interim += p;
+      }
+    }
+
+    interim = stripDuplicatedInterim(interim.trim(), finals).trim();
+
+    var parts = [];
+    for (var j = 0; j < finals.length; j++) {
+      parts.push({ text: finals[j], isFinal: true });
+    }
+    if (interim) {
+      parts.push({ text: interim, isFinal: false });
     }
     return parts;
   }
