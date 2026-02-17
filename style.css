@@ -104,12 +104,8 @@ body {
   color: #ffd700;
 }
 
-.text-content .text-line.session-line {
-  color: rgba(255, 215, 0, 0.85);
-}
-
-.text-content .text-line.session-line.interim {
-  color: rgba(255, 215, 0, 0.5);
+.text-content .session-interim {
+  color: rgba(255, 215, 0, 0.7) !important;
   font-style: italic;
 }
 

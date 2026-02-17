@@ -150,24 +150,26 @@
     if (ph) ph.remove();
   }
 
-  // 录音中：用一个容器显示所有短句，每句一行
-  function updateSessionEl(parts, isInterim) {
+  // 录音中：已确认短句白色，正在说的那句黄色
+  function updateSessionEl(parts, hasInterim) {
     clearPlaceholder();
     var el = textContent.querySelector('.session-line');
     if (!el) {
       el = document.createElement('div');
-      el.className = 'text-line session-line';
+      el.className = 'session-line';
       textContent.appendChild(el);
     }
     el.textContent = '';
+    var finalCount = hasInterim ? parts.length - 1 : parts.length;
     for (var i = 0; i < parts.length; i++) {
-      if (i > 0) el.appendChild(document.createElement('br'));
-      el.appendChild(document.createTextNode(parts[i]));
-    }
-    if (isInterim) {
-      el.classList.add('interim');
-    } else {
-      el.classList.remove('interim');
+      var line = document.createElement('p');
+      if (i < finalCount) {
+        line.className = 'text-line';
+      } else {
+        line.className = 'text-line session-interim';
+      }
+      line.textContent = parts[i];
+      el.appendChild(line);
     }
     scrollToBottom();
   }
