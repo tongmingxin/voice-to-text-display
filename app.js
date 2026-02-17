@@ -18,9 +18,8 @@
   var recognition = null;
   var hasText = false;
 
-  // 每次按住的会话累积
-  var sessionFinalParts = [];
-  var sessionInterim = '';
+  // 每次按住的会话累积（按 result index 保存，避免重算导致丢字）
+  var sessionSegments = [];
 
   // 字体大小（vw 单位）
   var FONT_SIZES = [5, 6, 7, 8, 10, 12, 14];
@@ -68,39 +67,44 @@
     return rec;
   }
 
-  // --- 获取当前会话的短句列表 ---
+  // --- 获取当前会话可显示短句 ---
   function getDisplayParts() {
     var parts = [];
-    for (var i = 0; i < sessionFinalParts.length; i++) {
-      var p = sessionFinalParts[i].trim();
-      if (p) parts.push(p);
+    var hasInterim = false;
+    for (var i = 0; i < sessionSegments.length; i++) {
+      var seg = sessionSegments[i];
+      if (!seg || !seg.text) continue;
+      var p = seg.text.trim();
+      if (!p) continue;
+      if (seg.isFinal) {
+        parts.push(p);
+      } else {
+        parts.push(p);
+        hasInterim = true;
+      }
     }
-    if (sessionInterim.trim()) {
-      parts.push(sessionInterim.trim());
-    }
-    return parts;
+    return {
+      parts: parts,
+      hasInterim: hasInterim
+    };
   }
 
   // 结果处理：不管是否正在录音，只要 session 还没 finalize 就继续接收
   function onResult(event) {
     if (!isRecording && !pendingFinalize) return;
 
-    var finalParts = [];
-    var interims = '';
-    for (var i = 0; i < event.results.length; i++) {
-      if (event.results[i].isFinal) {
-        finalParts.push(event.results[i][0].transcript);
-      } else {
-        interims += event.results[i][0].transcript;
-      }
+    // 仅更新变化范围，避免全量重建时的状态抖动/丢字
+    for (var i = event.resultIndex; i < event.results.length; i++) {
+      var r = event.results[i];
+      sessionSegments[i] = {
+        text: (r[0] && r[0].transcript) ? r[0].transcript : '',
+        isFinal: !!r.isFinal
+      };
     }
 
-    sessionFinalParts = finalParts;
-    sessionInterim = interims;
-
-    var parts = getDisplayParts();
-    if (parts.length > 0) {
-      updateSessionEl(parts, interims.length > 0);
+    var display = getDisplayParts();
+    if (display.parts.length > 0) {
+      updateSessionEl(display.parts, display.hasInterim);
     }
   }
 
@@ -186,7 +190,8 @@
 
   // 松手后：每个短句变成独立的一行
   function finalizeSession() {
-    var parts = getDisplayParts();
+    var display = getDisplayParts();
+    var parts = display.parts;
     var el = textContent.querySelector('.session-line');
     if (el) el.remove();
 
@@ -202,8 +207,7 @@
       scrollToBottom();
     }
 
-    sessionFinalParts = [];
-    sessionInterim = '';
+    sessionSegments = [];
   }
 
   function scrollToBottom() {
@@ -217,8 +221,7 @@
     if (isRecording) return;
     isRecording = true;
     pendingFinalize = false;
-    sessionFinalParts = [];
-    sessionInterim = '';
+    sessionSegments = [];
 
     talkBtn.classList.add('recording');
     talkBtn.querySelector('.btn-text').textContent = '松开结束';
