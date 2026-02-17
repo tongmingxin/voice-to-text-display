@@ -19,7 +19,7 @@
   var hasText = false;
 
   // 每次按住的会话累积
-  var sessionFinal = '';
+  var sessionFinalParts = [];
   var sessionInterim = '';
 
   // 字体大小（vw 单位）
@@ -68,26 +68,61 @@
     return rec;
   }
 
+  // --- 自动标点 ---
+  var CN_END_PUNCS = '。！？；…，、：""''）】》.!?;)';
+
+  function hasPunctuation(text) {
+    if (!text) return false;
+    return CN_END_PUNCS.indexOf(text.charAt(text.length - 1)) !== -1;
+  }
+
+  function buildDisplayText(isFinal) {
+    var parts = [];
+    for (var i = 0; i < sessionFinalParts.length; i++) {
+      var p = sessionFinalParts[i].trim();
+      if (p) parts.push(p);
+    }
+    if (!isFinal && sessionInterim.trim()) {
+      parts.push(sessionInterim.trim());
+    }
+    if (parts.length === 0) return '';
+
+    // 用逗号连接各片段（如果片段本身没有结尾标点）
+    var result = parts[0];
+    for (var j = 1; j < parts.length; j++) {
+      if (!hasPunctuation(result)) {
+        result += '，';
+      }
+      result += parts[j];
+    }
+
+    // 结束时加句号
+    if (isFinal && result && !hasPunctuation(result)) {
+      result += '。';
+    }
+    return result;
+  }
+
   // 结果处理：不管是否正在录音，只要 session 还没 finalize 就继续接收
   function onResult(event) {
     if (!isRecording && !pendingFinalize) return;
 
-    var finals = '';
+    var finalParts = [];
     var interims = '';
     for (var i = 0; i < event.results.length; i++) {
       if (event.results[i].isFinal) {
-        finals += event.results[i][0].transcript;
+        finalParts.push(event.results[i][0].transcript);
       } else {
         interims += event.results[i][0].transcript;
       }
     }
 
-    sessionFinal = finals;
+    sessionFinalParts = finalParts;
     sessionInterim = interims;
 
-    var combined = sessionFinal + sessionInterim;
-    if (combined) {
-      updateSessionEl(combined, interims.length > 0);
+    var display = buildDisplayText(false);
+    if (display) {
+      updateSessionEl(display, interims.length > 0);
     }
   }
 
@@ -155,7 +190,7 @@
   }
 
   function finalizeSession() {
-    var full = (sessionFinal + sessionInterim).trim();
+    var full = buildDisplayText(true).trim();
     var el = textContent.querySelector('.session-line');
     if (el) el.remove();
 
@@ -169,7 +204,7 @@
       scrollToBottom();
     }
 
-    sessionFinal = '';
+    sessionFinalParts = [];
     sessionInterim = '';
   }
 
@@ -184,7 +219,7 @@
     if (isRecording) return;
     isRecording = true;
     pendingFinalize = false;
-    sessionFinal = '';
+    sessionFinalParts = [];
     sessionInterim = '';
 
     talkBtn.classList.add('recording');
