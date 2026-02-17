@@ -70,23 +70,17 @@
   // --- 获取当前会话可显示短句 ---
   function getDisplayParts() {
     var parts = [];
-    var hasInterim = false;
     for (var i = 0; i < sessionSegments.length; i++) {
       var seg = sessionSegments[i];
       if (!seg || !seg.text) continue;
       var p = seg.text.trim();
       if (!p) continue;
-      if (seg.isFinal) {
-        parts.push(p);
-      } else {
-        parts.push(p);
-        hasInterim = true;
-      }
+      parts.push({
+        text: p,
+        isFinal: !!seg.isFinal
+      });
     }
-    return {
-      parts: parts,
-      hasInterim: hasInterim
-    };
+    return parts;
   }
 
   // 结果处理：不管是否正在录音，只要 session 还没 finalize 就继续接收
@@ -101,10 +95,12 @@
         isFinal: !!r.isFinal
       };
     }
+    // 清理可能残留的旧段落，防止颜色/文本错位
+    sessionSegments.length = event.results.length;
 
-    var display = getDisplayParts();
-    if (display.parts.length > 0) {
-      updateSessionEl(display.parts, display.hasInterim);
+    var parts = getDisplayParts();
+    if (parts.length > 0) {
+      updateSessionEl(parts);
     }
   }
 
@@ -156,7 +152,7 @@
 
   // 录音中：已确认短句白色，正在说的那句黄色
   // 使用增量更新，避免每个字符都清空重建导致闪烁
-  function updateSessionEl(parts, hasInterim) {
+  function updateSessionEl(parts) {
     clearPlaceholder();
     var el = textContent.querySelector('.session-line');
     if (!el) {
@@ -174,11 +170,10 @@
       el.removeChild(el.lastChild);
     }
 
-    var finalCount = hasInterim ? parts.length - 1 : parts.length;
     for (var i = 0; i < parts.length; i++) {
       var line = el.children[i];
-      line.textContent = parts[i];
-      if (i < finalCount) {
+      line.textContent = parts[i].text;
+      if (parts[i].isFinal) {
         line.className = 'text-line session-final';
       } else {
         line.className = 'text-line session-interim';
@@ -190,8 +185,7 @@
 
   // 松手后：每个短句变成独立的一行
   function finalizeSession() {
-    var display = getDisplayParts();
-    var parts = display.parts;
+    var parts = getDisplayParts();
     var el = textContent.querySelector('.session-line');
     if (el) el.remove();
 
@@ -201,7 +195,7 @@
       for (var i = 0; i < parts.length; i++) {
         var p = document.createElement('p');
         p.className = 'text-line';
-        p.textContent = parts[i];
+        p.textContent = parts[i].text;
         textContent.appendChild(p);
       }
       scrollToBottom();

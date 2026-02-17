@@ -100,7 +100,7 @@ body {
   animation: fadeIn 0.3s ease-out;
 }
 
-.text-content .text-line:last-child {
+.text-content > .text-line:last-of-type {
   color: #ffd700;
 }
 
