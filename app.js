@@ -69,7 +69,7 @@
   }
 
   // --- 自动标点 ---
-  var CN_END_PUNCS = '。！？；…，、：""''）】》.!?;)';
+  var CN_END_PUNCS = '。！？；\u2026，、：\u201C\u201D\u2018\u2019）】》.!?;)';
 
   function hasPunctuation(text) {
     if (!text) return false;
