@@ -151,6 +151,7 @@
   }
 
   // 录音中：已确认短句白色，正在说的那句黄色
+  // 使用增量更新，避免每个字符都清空重建导致闪烁
   function updateSessionEl(parts, hasInterim) {
     clearPlaceholder();
     var el = textContent.querySelector('.session-line');
@@ -159,18 +160,27 @@
       el.className = 'session-line';
       textContent.appendChild(el);
     }
-    el.textContent = '';
+
+    while (el.children.length < parts.length) {
+      var newLine = document.createElement('p');
+      newLine.className = 'text-line session-final';
+      el.appendChild(newLine);
+    }
+    while (el.children.length > parts.length) {
+      el.removeChild(el.lastChild);
+    }
+
     var finalCount = hasInterim ? parts.length - 1 : parts.length;
     for (var i = 0; i < parts.length; i++) {
-      var line = document.createElement('p');
+      var line = el.children[i];
+      line.textContent = parts[i];
       if (i < finalCount) {
-        line.className = 'text-line';
+        line.className = 'text-line session-final';
       } else {
         line.className = 'text-line session-interim';
       }
-      line.textContent = parts[i];
-      el.appendChild(line);
     }
+
     scrollToBottom();
   }
 
