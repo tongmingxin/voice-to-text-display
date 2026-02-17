@@ -94,28 +94,30 @@ body {
 .text-content .text-line {
   font-weight: 700;
   line-height: 1.5;
-  color: #ffffff;
+  color: #ffffff; /* 默认历史记录为白色 */
   margin-bottom: 0.4em;
   word-break: break-all;
   animation: fadeIn 0.3s ease-out;
 }
 
+/* 最新一条历史记录（松手后）显示为黄色 */
 .text-content > .text-line:last-of-type {
   color: #ffd700;
 }
 
+/* --- 录音过程中的样式 (Session) --- */
 .text-content .session-line .text-line {
   animation: none;
   margin-bottom: 0.25em;
 }
 
-.text-content .session-line .session-final {
-  color: #ffffff !important;
-}
-
+/* 录音中：无论 Final 还是 Interim，统统黄色斜体 */
+/* 这样能避免断句后颜色不一致的问题 */
+.text-content .session-line .session-final,
 .text-content .session-line .session-interim {
-  color: rgba(255, 215, 0, 0.7) !important;
-  font-style: italic;
+  color: #ffd700 !important;
+  font-style: italic !important;
+  opacity: 1;
 }
 
 .placeholder-text {
