@@ -222,12 +222,18 @@
     var el = textContent.querySelector('.session-line');
     if (el) el.remove();
 
+    // 移除上一轮的“最新”标记，让它们变回白色
+    var oldLatest = textContent.querySelectorAll('.latest-session');
+    for (var i = 0; i < oldLatest.length; i++) {
+      oldLatest[i].classList.remove('latest-session');
+    }
+
     if (parts.length > 0) {
       clearPlaceholder();
       hasText = true;
       for (var i = 0; i < parts.length; i++) {
         var p = document.createElement('p');
-        p.className = 'text-line';
+        p.className = 'text-line latest-session'; // 标记为最新，CSS 中设为黄色
         p.textContent = parts[i].text;
         textContent.appendChild(p);
       }

@@ -101,7 +101,7 @@ body {
 }
 
 /* 最新一条历史记录（松手后）显示为黄色 */
-.text-content > .text-line:last-of-type {
+.text-content .text-line.latest-session {
   color: #ffd700;
 }
 
