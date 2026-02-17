@@ -82,7 +82,8 @@
       var p = sessionFinalParts[i].trim();
       if (p) parts.push(p);
     }
-    if (!isFinal && sessionInterim.trim()) {
+    // 始终包含 interim 文字，防止松手后丢失未确认的识别结果
+    if (sessionInterim.trim()) {
       parts.push(sessionInterim.trim());
     }
     if (parts.length === 0) return '';
