@@ -68,40 +68,17 @@
     return rec;
   }
 
-  // --- 自动标点 ---
-  var CN_END_PUNCS = '。！？；\u2026，、：\u201C\u201D\u2018\u2019）】》.!?;)';
-
-  function hasPunctuation(text) {
-    if (!text) return false;
-    return CN_END_PUNCS.indexOf(text.charAt(text.length - 1)) !== -1;
-  }
-
-  function buildDisplayText(isFinal) {
+  // --- 获取当前会话的短句列表 ---
+  function getDisplayParts() {
     var parts = [];
     for (var i = 0; i < sessionFinalParts.length; i++) {
       var p = sessionFinalParts[i].trim();
       if (p) parts.push(p);
     }
-    // 始终包含 interim 文字，防止松手后丢失未确认的识别结果
     if (sessionInterim.trim()) {
       parts.push(sessionInterim.trim());
     }
-    if (parts.length === 0) return '';
-
-    // 用逗号连接各片段（如果片段本身没有结尾标点）
-    var result = parts[0];
-    for (var j = 1; j < parts.length; j++) {
-      if (!hasPunctuation(result)) {
-        result += '，';
-      }
-      result += parts[j];
-    }
-
-    // 结束时加句号
-    if (isFinal && result && !hasPunctuation(result)) {
-      result += '。';
-    }
-    return result;
+    return parts;
   }
 
   // 结果处理：不管是否正在录音，只要 session 还没 finalize 就继续接收
@@ -121,9 +98,9 @@
     sessionFinalParts = finalParts;
     sessionInterim = interims;
 
-    var display = buildDisplayText(false);
-    if (display) {
-      updateSessionEl(display, interims.length > 0);
+    var parts = getDisplayParts();
+    if (parts.length > 0) {
+      updateSessionEl(parts, interims.length > 0);
     }
   }
 
@@ -173,15 +150,20 @@
     if (ph) ph.remove();
   }
 
-  function updateSessionEl(text, isInterim) {
+  // 录音中：用一个容器显示所有短句，每句一行
+  function updateSessionEl(parts, isInterim) {
     clearPlaceholder();
     var el = textContent.querySelector('.session-line');
     if (!el) {
-      el = document.createElement('p');
+      el = document.createElement('div');
       el.className = 'text-line session-line';
       textContent.appendChild(el);
     }
-    el.textContent = text;
+    el.textContent = '';
+    for (var i = 0; i < parts.length; i++) {
+      if (i > 0) el.appendChild(document.createElement('br'));
+      el.appendChild(document.createTextNode(parts[i]));
+    }
     if (isInterim) {
       el.classList.add('interim');
     } else {
@@ -190,18 +172,21 @@
     scrollToBottom();
   }
 
+  // 松手后：每个短句变成独立的一行
   function finalizeSession() {
-    var full = buildDisplayText(true).trim();
+    var parts = getDisplayParts();
     var el = textContent.querySelector('.session-line');
     if (el) el.remove();
 
-    if (full) {
+    if (parts.length > 0) {
       clearPlaceholder();
       hasText = true;
-      var p = document.createElement('p');
-      p.className = 'text-line';
-      p.textContent = full;
-      textContent.appendChild(p);
+      for (var i = 0; i < parts.length; i++) {
+        var p = document.createElement('p');
+        p.className = 'text-line';
+        p.textContent = parts[i];
+        textContent.appendChild(p);
+      }
       scrollToBottom();
     }
 
