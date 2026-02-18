@@ -200,7 +200,18 @@
       recognition = null;
       if (!hasText) showToast('未检测到语音，请重试');
     } else if (isRecording) {
-      commitSession(getWSText());
+      // 引擎意外停止且没有识别到任何文字 → 可能是不支持，切换讯飞
+      var text = getWSText();
+      if (!text && !useXfyun && hasXfyun) {
+        useXfyun = true;
+        recognition = null;
+        var el = textContent.querySelector('.session-line');
+        if (el) el.remove();
+        resetUI();
+        showToast('已切换识别引擎，请再次长按说话');
+        return;
+      }
+      commitSession(text);
       recognition = null;
       resetUI();
       if (!hasText) showToast('识别中断，请重试');
