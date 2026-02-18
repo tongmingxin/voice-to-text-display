@@ -93,7 +93,7 @@ body { background: #1a1a2e; color: #ffffff; }
     <div class="toolbar">
       <div class="toolbar-left">
         <span class="app-name">语音转大字</span>
-        <span class="app-ver" id="verLabel">v17</span>
+        <span class="app-ver" id="verLabel">v18</span>
       </div>
       <div class="toolbar-right">
         <button id="fontDown" class="icon-btn" title="缩小字体">A-</button>
@@ -337,7 +337,7 @@ var XfyunASR = (function () {
 (function () {
   'use strict';
 
-  var VER = 'v17';
+  var VER = 'v18';
   var talkBtn = document.getElementById('talkBtn');
   var textContent = document.getElementById('textContent');
   var textDisplay = document.getElementById('textDisplay');
@@ -368,7 +368,6 @@ var XfyunASR = (function () {
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   var hasXfyun = (typeof XfyunASR !== 'undefined') && XfyunASR.isSupported();
 
-  // 版本号 + 引擎状态显示
   function updateVerLabel() {
     var engine = useXfyun ? '讯飞' : (SR ? '默认' : '无');
     verLabel.textContent = VER + ' [' + engine + ']';
@@ -401,6 +400,32 @@ var XfyunASR = (function () {
     requestAnimationFrame(function () { textDisplay.scrollTop = textDisplay.scrollHeight; });
   }
 
+  // 录音中：多行显示（Web Speech API 使用，每个 segment 一行）
+  function showSessionSegments(segments) {
+    clearPlaceholder();
+    var el = textContent.querySelector('.session-line');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'session-line';
+      textContent.appendChild(el);
+    }
+    var lines = [];
+    for (var i = 0; i < segments.length; i++) {
+      var seg = segments[i];
+      if (seg && seg.text && seg.text.trim()) lines.push(seg);
+    }
+    while (el.children.length > lines.length) el.removeChild(el.lastChild);
+    for (var j = 0; j < lines.length; j++) {
+      var p = j < el.children.length ? el.children[j] : el.appendChild(document.createElement('p'));
+      var cls = 'text-line ' + (lines[j].isFinal ? 'session-final' : 'session-interim');
+      if (p.className !== cls) p.className = cls;
+      var txt = lines[j].text.trim();
+      if (p.textContent !== txt) p.textContent = txt;
+    }
+    scrollToBottom();
+  }
+
+  // 录音中：单行显示（讯飞使用）
   function showSessionText(text) {
     clearPlaceholder();
     var el = textContent.querySelector('.session-line');
@@ -415,9 +440,31 @@ var XfyunASR = (function () {
       el.appendChild(p);
     }
     el.children[0].textContent = text;
+    while (el.children.length > 1) el.removeChild(el.lastChild);
     scrollToBottom();
   }
 
+  // 松手：多行落盘（Web Speech API 使用）
+  function commitSegments(segments) {
+    var el = textContent.querySelector('.session-line');
+    if (el) el.remove();
+    var old = textContent.querySelectorAll('.latest-session');
+    for (var i = 0; i < old.length; i++) old[i].classList.remove('latest-session');
+    var added = false;
+    for (var j = 0; j < segments.length; j++) {
+      var seg = segments[j];
+      if (!seg || !seg.text || !seg.text.trim()) continue;
+      clearPlaceholder();
+      added = true;
+      var p = document.createElement('p');
+      p.className = 'text-line latest-session';
+      p.textContent = seg.text.trim();
+      textContent.appendChild(p);
+    }
+    if (added) { hasText = true; scrollToBottom(); }
+  }
+
+  // 松手：单行落盘（讯飞使用）
   function commitSession(text) {
     var el = textContent.querySelector('.session-line');
     if (el) el.remove();
@@ -469,23 +516,11 @@ var XfyunASR = (function () {
     return rec;
   }
 
-  function getWSText() {
-    var finals = [], interim = '';
+  function hasWSText() {
     for (var i = 0; i < sessionSegments.length; i++) {
-      var seg = sessionSegments[i];
-      if (!seg || !seg.text) continue;
-      if (seg.isFinal) {
-        if (finals.length === 0 || finals[finals.length - 1] !== seg.text.trim())
-          finals.push(seg.text.trim());
-      } else { interim += seg.text; }
+      if (sessionSegments[i] && sessionSegments[i].text && sessionSegments[i].text.trim()) return true;
     }
-    var it = interim.trim();
-    if (it && finals.length > 0) {
-      var all = finals.join('');
-      if (all && it.indexOf(all) === 0) it = it.slice(all.length);
-      else { var last = finals[finals.length - 1]; if (last && it.indexOf(last) === 0) it = it.slice(last.length); }
-    }
-    return finals.join('') + it;
+    return false;
   }
 
   function shouldSwitch() {
@@ -500,8 +535,7 @@ var XfyunASR = (function () {
       sessionSegments[i] = { text: (r[0] && r[0].transcript) || '', isFinal: !!r.isFinal };
     }
     sessionSegments.length = event.results.length;
-    var text = getWSText();
-    if (text) showSessionText(text);
+    showSessionSegments(sessionSegments);
   }
 
   function wsOnError(event) {
@@ -511,7 +545,10 @@ var XfyunASR = (function () {
       if (!useXfyun && hasXfyun) { switchToXfyun(); return; }
       showToast('无法连接语音服务'); return;
     }
-    if (event.error === 'not-allowed') { showToast('请允许使用麦克风权限'); return; }
+    if (event.error === 'not-allowed') {
+      if (shouldSwitch()) { switchToXfyun(); return; }
+      showToast('请允许使用麦克风权限'); return;
+    }
     if (event.error === 'no-speech') {
       if (shouldSwitch()) { switchToXfyun(); return; }
       showToast('未检测到语音，请重试'); return;
@@ -526,7 +563,7 @@ var XfyunASR = (function () {
       wsErrorHandled = false;
       if (useXfyun) return;
       if (pendingFinalize || isRecording) {
-        commitSession(getWSText());
+        commitSegments(sessionSegments);
         recognition = null;
         resetUI();
       }
@@ -535,15 +572,13 @@ var XfyunASR = (function () {
 
     if (pendingFinalize) {
       pendingFinalize = false;
-      var text = getWSText();
-      if (!text && shouldSwitch()) { switchToXfyun(); return; }
-      commitSession(text);
+      if (!hasWSText() && shouldSwitch()) { switchToXfyun(); return; }
+      commitSegments(sessionSegments);
       recognition = null;
       if (!hasText) showToast('未检测到语音，请重试');
     } else if (isRecording) {
-      var text2 = getWSText();
-      if (!text2 && shouldSwitch()) { switchToXfyun(); return; }
-      commitSession(text2);
+      if (!hasWSText() && shouldSwitch()) { switchToXfyun(); return; }
+      commitSegments(sessionSegments);
       recognition = null;
       resetUI();
       if (!hasText) showToast('识别中断，请重试');
@@ -569,7 +604,7 @@ var XfyunASR = (function () {
     setTimeout(function () {
       if (pendingFinalize) {
         pendingFinalize = false;
-        commitSession(getWSText());
+        commitSegments(sessionSegments);
         if (recognition) { try { recognition.abort(); } catch (e) {} recognition = null; }
         if (!hasText) showToast('识别超时，请重试');
       }
