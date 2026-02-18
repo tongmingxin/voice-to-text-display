@@ -93,7 +93,7 @@ body { background: #1a1a2e; color: #ffffff; }
     <div class="toolbar">
       <div class="toolbar-left">
         <span class="app-name">语音转大字</span>
-        <span class="app-ver" id="verLabel">v20</span>
+        <span class="app-ver" id="verLabel">v21</span>
       </div>
       <div class="toolbar-right">
         <button id="fontDown" class="icon-btn" title="缩小字体">A-</button>
@@ -321,10 +321,15 @@ var XfyunASR = (function () {
             return;
           }
           if (resp.data && resp.data.result) {
-            var sn = resp.data.result.sn;
-            var text = parseWords(resp.data.result);
+            var result = resp.data.result;
+            var sn = result.sn;
+            var text = parseWords(result);
+            // pgs:"rpl" 表示服务器修正，需删除旧区间再写入新结果
+            if (result.pgs === 'rpl' && result.rg && result.rg.length === 2) {
+              for (var k = result.rg[0]; k <= result.rg[1]; k++) delete resultMap[k];
+            }
             if (text) resultMap[sn] = text;
-            if (cb.onResult) cb.onResult(getFullText(), resp.data.status === 2);
+            if (cb.onResult) cb.onResult(getFullText());
           }
           if (resp.data && resp.data.status === 2) cleanup();
         };
@@ -366,7 +371,7 @@ var XfyunASR = (function () {
 (function () {
   'use strict';
 
-  var VER = 'v20';
+  var VER = 'v21';
   var talkBtn = document.getElementById('talkBtn');
   var textContent = document.getElementById('textContent');
   var textDisplay = document.getElementById('textDisplay');
@@ -651,7 +656,7 @@ var XfyunASR = (function () {
     xfHadError = false;
     pendingFinalize = false;
     XfyunASR.start(
-      function (text) { xfText = text; if (text) showSessionText(text); },
+      function (text) { xfText = text; showSessionText(text || ''); },
       function (msg) { xfHadError = true; showToast(msg || '识别出错'); },
       function () {
         if (xfStopTimer) { clearTimeout(xfStopTimer); xfStopTimer = null; }
