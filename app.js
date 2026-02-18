@@ -19,6 +19,7 @@
   var recognition = null;
   var hasText = false;
   var useXfyun = false;
+  var wsEverWorked = false; // Web Speech API 是否曾经成功识别过
 
   // Web Speech API 会话数据
   var sessionSegments = [];
@@ -161,6 +162,7 @@
 
   function wsOnResult(event) {
     if (!isRecording && !pendingFinalize) return;
+    wsEverWorked = true;
     for (var i = event.resultIndex; i < event.results.length; i++) {
       var r = event.results[i];
       sessionSegments[i] = {
@@ -173,45 +175,48 @@
     if (text) showSessionText(text);
   }
 
+  // Web Speech API 从未成功过 → 切换讯飞
+  function trySwitchToXfyun() {
+    if (useXfyun || wsEverWorked || !hasXfyun) return false;
+    useXfyun = true;
+    if (recognition) { try { recognition.abort(); } catch (e) {} recognition = null; }
+    pendingFinalize = false;
+    var el = textContent.querySelector('.session-line');
+    if (el) el.remove();
+    resetUI();
+    showToast('已切换识别引擎，请再次长按说话');
+    return true;
+  }
+
   function wsOnError(event) {
-    // 网络/服务不可用 → 切换到讯飞
-    if ((event.error === 'network' || event.error === 'service-not-allowed') && !useXfyun && hasXfyun) {
-      useXfyun = true;
-      if (recognition) { try { recognition.abort(); } catch (e) {} recognition = null; }
-      var el = textContent.querySelector('.session-line');
-      if (el) el.remove();
-      resetUI();
-      showToast('已切换识别引擎，请再次长按说话');
+    // 权限被拒绝 → 不切换，直接提示（讯飞也需要麦克风权限）
+    if (event.error === 'not-allowed') {
+      showToast('请允许使用麦克风权限');
       return;
     }
+    // 其他所有错误：如果 Web Speech API 从未成功过，切换讯飞
+    if (trySwitchToXfyun()) return;
 
     var msg = '';
-    if (event.error === 'not-allowed') msg = '请允许使用麦克风权限';
-    else if (event.error === 'no-speech') msg = '未检测到语音，请重试';
+    if (event.error === 'no-speech') msg = '未检测到语音，请重试';
     else if (event.error === 'network') msg = '无法连接语音服务';
     else if (event.error === 'audio-capture') msg = '无法录音，请检查麦克风';
-    if (msg) showToast(msg);
+    else msg = '识别出错，请重试';
+    showToast(msg);
   }
 
   function wsOnEnd() {
     if (pendingFinalize) {
       pendingFinalize = false;
-      commitSession(getWSText());
+      var text = getWSText();
+      if (!text && trySwitchToXfyun()) return;
+      commitSession(text);
       recognition = null;
       if (!hasText) showToast('未检测到语音，请重试');
     } else if (isRecording) {
-      // 引擎意外停止且没有识别到任何文字 → 可能是不支持，切换讯飞
-      var text = getWSText();
-      if (!text && !useXfyun && hasXfyun) {
-        useXfyun = true;
-        recognition = null;
-        var el = textContent.querySelector('.session-line');
-        if (el) el.remove();
-        resetUI();
-        showToast('已切换识别引擎，请再次长按说话');
-        return;
-      }
-      commitSession(text);
+      var text2 = getWSText();
+      if (!text2 && trySwitchToXfyun()) return;
+      commitSession(text2);
       recognition = null;
       resetUI();
       if (!hasText) showToast('识别中断，请重试');
