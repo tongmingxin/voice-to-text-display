@@ -1,5 +1,6 @@
 /* ============================================
    语音转大字显示 - 核心逻辑
+   双引擎：Web Speech API（默认）+ 讯飞（兜底）
    ============================================ */
 (function () {
   'use strict';
@@ -17,9 +18,13 @@
   var pendingFinalize = false;
   var recognition = null;
   var hasText = false;
+  var useXfyun = false;
 
-  // 每次按住的会话累积（按 result index 保存，避免重算导致丢字）
+  // Web Speech API 会话数据
   var sessionSegments = [];
+
+  // 讯飞会话数据
+  var xfText = '';
 
   // 字体大小（vw 单位）
   var FONT_SIZES = [5, 6, 7, 8, 10, 12, 14];
@@ -27,9 +32,14 @@
 
   // --- 兼容性检查 ---
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) {
+  var hasXfyun = (typeof XfyunASR !== 'undefined') && XfyunASR.isSupported();
+
+  if (!SR && !hasXfyun) {
     unsupportedModal.classList.remove('hidden');
     return;
+  }
+  if (!SR && hasXfyun) {
+    useXfyun = true;
   }
 
   // --- 字体大小 ---
@@ -39,153 +49,27 @@
   applyFontSize();
 
   fontUp.addEventListener('click', function () {
-    if (fontIndex < FONT_SIZES.length - 1) {
-      fontIndex++;
-      applyFontSize();
-      showToast('字体已放大');
-    }
+    if (fontIndex < FONT_SIZES.length - 1) { fontIndex++; applyFontSize(); showToast('字体已放大'); }
   });
-
   fontDown.addEventListener('click', function () {
-    if (fontIndex > 0) {
-      fontIndex--;
-      applyFontSize();
-      showToast('字体已缩小');
-    }
+    if (fontIndex > 0) { fontIndex--; applyFontSize(); showToast('字体已缩小'); }
   });
 
-  // --- 语音识别 ---
-  function createRecognition() {
-    var rec = new SR();
-    rec.lang = 'zh-CN';
-    rec.interimResults = true;
-    rec.continuous = true;
-    rec.maxAlternatives = 1;
-    rec.onresult = onResult;
-    rec.onerror = onError;
-    rec.onend = onEnd;
-    return rec;
-  }
+  // =======================================================
+  //  通用显示逻辑
+  // =======================================================
 
-  function stripDuplicatedInterim(interimText, finals) {
-    var interim = interimText || '';
-    if (!interim) return '';
-    if (finals.length === 0) return interim;
-
-    var allFinalText = finals.join('');
-    if (allFinalText && interim.indexOf(allFinalText) === 0) {
-      interim = interim.slice(allFinalText.length);
-    } else {
-      var lastFinal = finals[finals.length - 1];
-      if (lastFinal && interim.indexOf(lastFinal) === 0) {
-        interim = interim.slice(lastFinal.length);
-      }
-    }
-    return interim;
-  }
-
-  // --- 获取当前会话可显示短句 ---
-  function getDisplayParts() {
-    var finals = [];
-    var interim = '';
-
-    for (var i = 0; i < sessionSegments.length; i++) {
-      var seg = sessionSegments[i];
-      if (!seg || !seg.text) continue;
-      var p = seg.text.trim();
-      if (!p) continue;
-      if (seg.isFinal) {
-        // 连续重复的 final 片段只保留一次，减少“看起来反复改色”的错觉
-        if (finals.length === 0 || finals[finals.length - 1] !== p) {
-          finals.push(p);
-        }
-      } else {
-        interim += p;
-      }
-    }
-
-    interim = stripDuplicatedInterim(interim.trim(), finals).trim();
-
-    var parts = [];
-    for (var j = 0; j < finals.length; j++) {
-      parts.push({ text: finals[j], isFinal: true });
-    }
-    if (interim) {
-      parts.push({ text: interim, isFinal: false });
-    }
-    return parts;
-  }
-
-  // 结果处理：不管是否正在录音，只要 session 还没 finalize 就继续接收
-  function onResult(event) {
-    if (!isRecording && !pendingFinalize) return;
-
-    // 仅更新变化范围，避免全量重建时的状态抖动/丢字
-    for (var i = event.resultIndex; i < event.results.length; i++) {
-      var r = event.results[i];
-      sessionSegments[i] = {
-        text: (r[0] && r[0].transcript) ? r[0].transcript : '',
-        isFinal: !!r.isFinal
-      };
-    }
-    // 清理可能残留的旧段落，防止颜色/文本错位
-    sessionSegments.length = event.results.length;
-
-    var parts = getDisplayParts();
-    if (parts.length > 0) {
-      updateSessionEl(parts);
-    }
-  }
-
-  function onError(event) {
-    var msg = '';
-    if (event.error === 'not-allowed') {
-      msg = '请允许使用麦克风权限';
-    } else if (event.error === 'no-speech') {
-      msg = '未检测到语音，请重试';
-    } else if (event.error === 'network') {
-      msg = '无法连接语音服务，请检查网络';
-    } else if (event.error === 'service-not-allowed') {
-      msg = '语音服务不可用，请换用 Safari(iPhone) 或 Chrome 浏览器';
-    } else if (event.error === 'audio-capture') {
-      msg = '无法录音，请检查麦克风';
-    }
-    if (msg) showToast(msg);
-  }
-
-  // 识别引擎结束时：做最终 finalize
-  function onEnd() {
-    if (pendingFinalize) {
-      pendingFinalize = false;
-      finalizeSession();
-      recognition = null;
-
-      if (!hasText) {
-        showToast('未检测到语音，请重试');
-      }
-    } else if (isRecording) {
-      // 引擎意外停止（网络中断、超时等）
-      isRecording = false;
-      finalizeSession();
-      recognition = null;
-      talkBtn.classList.remove('recording');
-      talkBtn.querySelector('.btn-text').textContent = '长按说话';
-
-      if (!hasText) {
-        showToast('识别中断，请重试');
-      }
-    }
-  }
-
-  // --- 文字显示 ---
   function clearPlaceholder() {
     var ph = textContent.querySelector('.placeholder-text');
     if (ph) ph.remove();
   }
 
-  // 录音中：已确认短句白色，正在说的那句黄色
-  // 使用增量更新，避免每个字符都清空重建导致闪烁
-  function updateSessionEl(parts) {
+  function scrollToBottom() {
+    requestAnimationFrame(function () { textDisplay.scrollTop = textDisplay.scrollHeight; });
+  }
+
+  // 录音中显示（黄色斜体）
+  function showSessionText(text) {
     clearPlaceholder();
     var el = textContent.querySelector('.session-line');
     if (!el) {
@@ -193,147 +77,263 @@
       el.className = 'session-line';
       textContent.appendChild(el);
     }
-
-    while (el.children.length < parts.length) {
-      var newLine = document.createElement('p');
-      newLine.className = 'text-line session-final';
-      el.appendChild(newLine);
+    // 单个 <p> 显示全文
+    if (el.children.length === 0) {
+      var p = document.createElement('p');
+      p.className = 'text-line session-interim';
+      el.appendChild(p);
     }
-    while (el.children.length > parts.length) {
-      el.removeChild(el.lastChild);
-    }
-
-    for (var i = 0; i < parts.length; i++) {
-      var line = el.children[i];
-      line.textContent = parts[i].text;
-      if (parts[i].isFinal) {
-        line.className = 'text-line session-final';
-      } else {
-        line.className = 'text-line session-interim';
-      }
-    }
-
+    el.children[0].textContent = text;
     scrollToBottom();
   }
 
-  // 松手后：每个短句变成独立的一行
-  function finalizeSession() {
-    var parts = getDisplayParts();
+  // 松手后落盘（黄色非斜体 = latest-session）
+  function commitSession(text) {
     var el = textContent.querySelector('.session-line');
     if (el) el.remove();
 
-    // 移除上一轮的“最新”标记，让它们变回白色
-    var oldLatest = textContent.querySelectorAll('.latest-session');
-    for (var i = 0; i < oldLatest.length; i++) {
-      oldLatest[i].classList.remove('latest-session');
-    }
+    // 移除上一轮的标记
+    var old = textContent.querySelectorAll('.latest-session');
+    for (var i = 0; i < old.length; i++) old[i].classList.remove('latest-session');
 
-    if (parts.length > 0) {
+    var trimmed = text.trim();
+    if (trimmed) {
       clearPlaceholder();
       hasText = true;
-      for (var i = 0; i < parts.length; i++) {
-        var p = document.createElement('p');
-        p.className = 'text-line latest-session'; // 标记为最新，CSS 中设为黄色
-        p.textContent = parts[i].text;
-        textContent.appendChild(p);
-      }
+      var p = document.createElement('p');
+      p.className = 'text-line latest-session';
+      p.textContent = trimmed;
+      textContent.appendChild(p);
       scrollToBottom();
     }
-
-    sessionSegments = [];
   }
 
-  function scrollToBottom() {
-    requestAnimationFrame(function () {
-      textDisplay.scrollTop = textDisplay.scrollHeight;
-    });
-  }
-
-  // --- 录音控制 ---
-  function startRecording() {
-    if (isRecording) return;
-    isRecording = true;
+  function resetUI() {
+    isRecording = false;
     pendingFinalize = false;
+    talkBtn.classList.remove('recording');
+    talkBtn.querySelector('.btn-text').textContent = '长按说话';
+  }
+
+  // =======================================================
+  //  Web Speech API 引擎
+  // =======================================================
+
+  function createRecognition() {
+    var rec = new SR();
+    rec.lang = 'zh-CN';
+    rec.interimResults = true;
+    rec.continuous = true;
+    rec.maxAlternatives = 1;
+    rec.onresult = wsOnResult;
+    rec.onerror = wsOnError;
+    rec.onend = wsOnEnd;
+    return rec;
+  }
+
+  function getWSText() {
+    var finals = [];
+    var interim = '';
+    for (var i = 0; i < sessionSegments.length; i++) {
+      var seg = sessionSegments[i];
+      if (!seg || !seg.text) continue;
+      if (seg.isFinal) {
+        if (finals.length === 0 || finals[finals.length - 1] !== seg.text.trim()) {
+          finals.push(seg.text.trim());
+        }
+      } else {
+        interim += seg.text;
+      }
+    }
+    // 去除 interim 与 finals 重叠前缀
+    var it = interim.trim();
+    if (it && finals.length > 0) {
+      var all = finals.join('');
+      if (all && it.indexOf(all) === 0) it = it.slice(all.length);
+      else {
+        var last = finals[finals.length - 1];
+        if (last && it.indexOf(last) === 0) it = it.slice(last.length);
+      }
+    }
+    var combined = finals.join('') + it;
+    return combined;
+  }
+
+  function wsOnResult(event) {
+    if (!isRecording && !pendingFinalize) return;
+    for (var i = event.resultIndex; i < event.results.length; i++) {
+      var r = event.results[i];
+      sessionSegments[i] = {
+        text: (r[0] && r[0].transcript) ? r[0].transcript : '',
+        isFinal: !!r.isFinal
+      };
+    }
+    sessionSegments.length = event.results.length;
+    var text = getWSText();
+    if (text) showSessionText(text);
+  }
+
+  function wsOnError(event) {
+    // 网络/服务不可用 → 切换到讯飞
+    if ((event.error === 'network' || event.error === 'service-not-allowed') && !useXfyun && hasXfyun) {
+      useXfyun = true;
+      if (recognition) { try { recognition.abort(); } catch (e) {} recognition = null; }
+      var el = textContent.querySelector('.session-line');
+      if (el) el.remove();
+      resetUI();
+      showToast('已切换识别引擎，请再次长按说话');
+      return;
+    }
+
+    var msg = '';
+    if (event.error === 'not-allowed') msg = '请允许使用麦克风权限';
+    else if (event.error === 'no-speech') msg = '未检测到语音，请重试';
+    else if (event.error === 'network') msg = '无法连接语音服务';
+    else if (event.error === 'audio-capture') msg = '无法录音，请检查麦克风';
+    if (msg) showToast(msg);
+  }
+
+  function wsOnEnd() {
+    if (pendingFinalize) {
+      pendingFinalize = false;
+      commitSession(getWSText());
+      recognition = null;
+      if (!hasText) showToast('未检测到语音，请重试');
+    } else if (isRecording) {
+      commitSession(getWSText());
+      recognition = null;
+      resetUI();
+      if (!hasText) showToast('识别中断，请重试');
+    }
+  }
+
+  function startWS() {
     sessionSegments = [];
-
-    talkBtn.classList.add('recording');
-    talkBtn.querySelector('.btn-text').textContent = '松开结束';
-
     recognition = createRecognition();
     try {
       recognition.start();
     } catch (e) {
-      isRecording = false;
-      talkBtn.classList.remove('recording');
-      talkBtn.querySelector('.btn-text').textContent = '长按说话';
-      showToast('启动失败，请重试');
+      if (hasXfyun) {
+        useXfyun = true;
+        startXF();
+        showToast('已切换识别引擎');
+      } else {
+        resetUI();
+        showToast('启动失败，请重试');
+      }
     }
   }
 
-  // 松手时：设置 pendingFinalize，调用 stop() 让引擎返回最终结果
-  // 真正的 finalize 在 onEnd 中执行，确保不丢失任何识别结果
-  function finishRecording() {
-    if (!isRecording) return;
-    isRecording = false;
+  function stopWS() {
     pendingFinalize = true;
-
-    talkBtn.classList.remove('recording');
-    talkBtn.querySelector('.btn-text').textContent = '长按说话';
-
-    if (recognition) {
-      try { recognition.stop(); } catch (e) {}
-    }
-
-    // 安全超时：如果 onEnd 5秒内没触发，强制 finalize
+    if (recognition) { try { recognition.stop(); } catch (e) {} }
     setTimeout(function () {
       if (pendingFinalize) {
         pendingFinalize = false;
-        finalizeSession();
-        if (recognition) {
-          try { recognition.abort(); } catch (e) {}
-          recognition = null;
-        }
-        if (!hasText) {
-          showToast('识别超时，请重试');
-        }
+        commitSession(getWSText());
+        if (recognition) { try { recognition.abort(); } catch (e) {} recognition = null; }
+        if (!hasText) showToast('识别超时，请重试');
       }
     }, 5000);
   }
 
-  // --- 按钮事件 ---
+  // =======================================================
+  //  讯飞引擎
+  // =======================================================
+
+  function startXF() {
+    xfText = '';
+    XfyunASR.start(
+      function onResult(text) {
+        xfText = text;
+        if (text) showSessionText(text);
+      },
+      function onError(msg) {
+        showToast(msg || '识别出错');
+      },
+      function onEnd() {
+        if (pendingFinalize || isRecording) {
+          commitSession(xfText);
+          resetUI();
+          if (!hasText) showToast('未检测到语音，请重试');
+        }
+      }
+    );
+  }
+
+  function stopXF() {
+    pendingFinalize = true;
+    XfyunASR.stop();
+    setTimeout(function () {
+      if (pendingFinalize) {
+        commitSession(xfText);
+        resetUI();
+        if (!hasText) showToast('识别超时，请重试');
+      }
+    }, 8000);
+  }
+
+  // =======================================================
+  //  录音控制（统一入口）
+  // =======================================================
+
+  function startRecording() {
+    if (isRecording) return;
+    isRecording = true;
+    pendingFinalize = false;
+
+    talkBtn.classList.add('recording');
+    talkBtn.querySelector('.btn-text').textContent = '松开结束';
+
+    if (useXfyun) {
+      startXF();
+    } else {
+      startWS();
+    }
+  }
+
+  function finishRecording() {
+    if (!isRecording) return;
+    isRecording = false;
+
+    talkBtn.classList.remove('recording');
+    talkBtn.querySelector('.btn-text').textContent = '长按说话';
+
+    if (useXfyun) {
+      stopXF();
+    } else {
+      stopWS();
+    }
+  }
+
+  // =======================================================
+  //  按钮事件
+  // =======================================================
+
   var touchActive = false;
 
   talkBtn.addEventListener('touchstart', function (e) {
-    e.preventDefault();
-    touchActive = true;
-    startRecording();
+    e.preventDefault(); touchActive = true; startRecording();
   }, { passive: false });
 
   talkBtn.addEventListener('touchend', function (e) {
-    e.preventDefault();
-    if (touchActive) { touchActive = false; finishRecording(); }
+    e.preventDefault(); if (touchActive) { touchActive = false; finishRecording(); }
   }, { passive: false });
 
   talkBtn.addEventListener('touchcancel', function (e) {
-    e.preventDefault();
-    if (touchActive) { touchActive = false; finishRecording(); }
+    e.preventDefault(); if (touchActive) { touchActive = false; finishRecording(); }
   }, { passive: false });
 
   talkBtn.addEventListener('mousedown', function (e) {
-    if (touchActive) return;
-    e.preventDefault();
-    startRecording();
+    if (touchActive) return; e.preventDefault(); startRecording();
   });
 
   talkBtn.addEventListener('mouseup', function (e) {
-    if (touchActive) return;
-    e.preventDefault();
-    finishRecording();
+    if (touchActive) return; e.preventDefault(); finishRecording();
   });
 
   talkBtn.addEventListener('mouseleave', function () {
-    if (touchActive) return;
-    if (isRecording) finishRecording();
+    if (touchActive) return; if (isRecording) finishRecording();
   });
 
   talkBtn.addEventListener('contextmenu', function (e) { e.preventDefault(); });
