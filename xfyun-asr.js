@@ -227,9 +227,7 @@ var XfyunASR = (function () {
         };
 
         ws.onerror = function () {
-          if (cb.onError) cb.onError('讯飞连接失败');
-          cleanup();
-          reject(new Error('WebSocket error'));
+          reject(new Error('讯飞连接失败'));
         };
 
         ws.onclose = function () {
@@ -253,6 +251,7 @@ var XfyunASR = (function () {
     return !!(
       navigator.mediaDevices &&
       navigator.mediaDevices.getUserMedia &&
+      (window.AudioContext || window.webkitAudioContext) &&
       window.WebSocket &&
       window.crypto &&
       window.crypto.subtle

@@ -19,13 +19,19 @@
   var recognition = null;
   var hasText = false;
   var useXfyun = false;
-  var wsEverWorked = false; // Web Speech API 是否曾经成功识别过
+
+  // Web Speech API 跟踪
+  var wsEverWorked = false;
+  var wsNoSpeechCount = 0;
+  var WS_MAX_NO_SPEECH = 2;
+  var wsErrorShown = false;
 
   // Web Speech API 会话数据
   var sessionSegments = [];
 
   // 讯飞会话数据
   var xfText = '';
+  var xfHadError = false;
 
   // 字体大小（vw 单位）
   var FONT_SIZES = [5, 6, 7, 8, 10, 12, 14];
@@ -69,7 +75,6 @@
     requestAnimationFrame(function () { textDisplay.scrollTop = textDisplay.scrollHeight; });
   }
 
-  // 录音中显示（黄色斜体）
   function showSessionText(text) {
     clearPlaceholder();
     var el = textContent.querySelector('.session-line');
@@ -78,7 +83,6 @@
       el.className = 'session-line';
       textContent.appendChild(el);
     }
-    // 单个 <p> 显示全文
     if (el.children.length === 0) {
       var p = document.createElement('p');
       p.className = 'text-line session-interim';
@@ -88,12 +92,10 @@
     scrollToBottom();
   }
 
-  // 松手后落盘（黄色非斜体 = latest-session）
   function commitSession(text) {
     var el = textContent.querySelector('.session-line');
     if (el) el.remove();
 
-    // 移除上一轮的标记
     var old = textContent.querySelectorAll('.latest-session');
     for (var i = 0; i < old.length; i++) old[i].classList.remove('latest-session');
 
@@ -114,6 +116,16 @@
     pendingFinalize = false;
     talkBtn.classList.remove('recording');
     talkBtn.querySelector('.btn-text').textContent = '长按说话';
+  }
+
+  function switchToXfyun() {
+    useXfyun = true;
+    if (recognition) { try { recognition.abort(); } catch (e) {} recognition = null; }
+    pendingFinalize = false;
+    var el = textContent.querySelector('.session-line');
+    if (el) el.remove();
+    resetUI();
+    showToast('已切换识别引擎，请再次长按说话');
   }
 
   // =======================================================
@@ -146,7 +158,6 @@
         interim += seg.text;
       }
     }
-    // 去除 interim 与 finals 重叠前缀
     var it = interim.trim();
     if (it && finals.length > 0) {
       var all = finals.join('');
@@ -156,13 +167,13 @@
         if (last && it.indexOf(last) === 0) it = it.slice(last.length);
       }
     }
-    var combined = finals.join('') + it;
-    return combined;
+    return finals.join('') + it;
   }
 
   function wsOnResult(event) {
     if (!isRecording && !pendingFinalize) return;
     wsEverWorked = true;
+    wsNoSpeechCount = 0;
     for (var i = event.resultIndex; i < event.results.length; i++) {
       var r = event.results[i];
       sessionSegments[i] = {
@@ -175,48 +186,60 @@
     if (text) showSessionText(text);
   }
 
-  // Web Speech API 从未成功过 → 切换讯飞
-  function trySwitchToXfyun() {
-    if (useXfyun || wsEverWorked || !hasXfyun) return false;
-    useXfyun = true;
-    if (recognition) { try { recognition.abort(); } catch (e) {} recognition = null; }
-    pendingFinalize = false;
-    var el = textContent.querySelector('.session-line');
-    if (el) el.remove();
-    resetUI();
-    showToast('已切换识别引擎，请再次长按说话');
-    return true;
-  }
-
   function wsOnError(event) {
-    // 权限被拒绝 → 不切换，直接提示（讯飞也需要麦克风权限）
+    wsErrorShown = true;
+
+    // network / service-not-allowed → 明确是 Google 不可用，立即切换
+    if (event.error === 'network' || event.error === 'service-not-allowed') {
+      if (!useXfyun && hasXfyun) { switchToXfyun(); return; }
+      showToast('无法连接语音服务');
+      return;
+    }
+
     if (event.error === 'not-allowed') {
       showToast('请允许使用麦克风权限');
       return;
     }
-    // 其他所有错误：如果 Web Speech API 从未成功过，切换讯飞
-    if (trySwitchToXfyun()) return;
 
-    var msg = '';
-    if (event.error === 'no-speech') msg = '未检测到语音，请重试';
-    else if (event.error === 'network') msg = '无法连接语音服务';
-    else if (event.error === 'audio-capture') msg = '无法录音，请检查麦克风';
-    else msg = '识别出错，请重试';
-    showToast(msg);
+    if (event.error === 'no-speech') {
+      wsNoSpeechCount++;
+      // 连续多次 no-speech 且从未成功 → 引擎实际不可用，切换
+      if (!wsEverWorked && wsNoSpeechCount >= WS_MAX_NO_SPEECH && hasXfyun && !useXfyun) {
+        switchToXfyun();
+        return;
+      }
+      showToast('未检测到语音，请重试');
+      return;
+    }
+
+    if (event.error === 'audio-capture') {
+      showToast('无法录音，请检查麦克风');
+      return;
+    }
+
+    showToast('识别出错');
   }
 
   function wsOnEnd() {
+    // 如果 wsOnError 已经处理并显示了提示，只做状态清理
+    if (wsErrorShown) {
+      wsErrorShown = false;
+      if (useXfyun) return; // switchToXfyun 已经重置了
+      if (pendingFinalize || isRecording) {
+        commitSession(getWSText());
+        recognition = null;
+        resetUI();
+      }
+      return;
+    }
+
     if (pendingFinalize) {
       pendingFinalize = false;
-      var text = getWSText();
-      if (!text && trySwitchToXfyun()) return;
-      commitSession(text);
+      commitSession(getWSText());
       recognition = null;
       if (!hasText) showToast('未检测到语音，请重试');
     } else if (isRecording) {
-      var text2 = getWSText();
-      if (!text2 && trySwitchToXfyun()) return;
-      commitSession(text2);
+      commitSession(getWSText());
       recognition = null;
       resetUI();
       if (!hasText) showToast('识别中断，请重试');
@@ -225,18 +248,13 @@
 
   function startWS() {
     sessionSegments = [];
+    wsErrorShown = false;
     recognition = createRecognition();
     try {
       recognition.start();
     } catch (e) {
-      if (hasXfyun) {
-        useXfyun = true;
-        startXF();
-        showToast('已切换识别引擎');
-      } else {
-        resetUI();
-        showToast('启动失败，请重试');
-      }
+      if (hasXfyun) { useXfyun = true; startXF(); showToast('已切换识别引擎'); }
+      else { resetUI(); showToast('启动失败，请重试'); }
     }
   }
 
@@ -259,20 +277,20 @@
 
   function startXF() {
     xfText = '';
+    xfHadError = false;
     XfyunASR.start(
       function onResult(text) {
         xfText = text;
         if (text) showSessionText(text);
       },
       function onError(msg) {
+        xfHadError = true;
         showToast(msg || '识别出错');
       },
       function onEnd() {
-        if (pendingFinalize || isRecording) {
-          commitSession(xfText);
-          resetUI();
-          if (!hasText) showToast('未检测到语音，请重试');
-        }
+        commitSession(xfText);
+        resetUI();
+        if (!hasText && !xfHadError) showToast('未检测到语音，请重试');
       }
     );
   }
@@ -284,42 +302,30 @@
       if (pendingFinalize) {
         commitSession(xfText);
         resetUI();
-        if (!hasText) showToast('识别超时，请重试');
+        if (!hasText && !xfHadError) showToast('识别超时，请重试');
       }
     }, 8000);
   }
 
   // =======================================================
-  //  录音控制（统一入口）
+  //  录音控制
   // =======================================================
 
   function startRecording() {
     if (isRecording) return;
     isRecording = true;
     pendingFinalize = false;
-
     talkBtn.classList.add('recording');
     talkBtn.querySelector('.btn-text').textContent = '松开结束';
-
-    if (useXfyun) {
-      startXF();
-    } else {
-      startWS();
-    }
+    if (useXfyun) { startXF(); } else { startWS(); }
   }
 
   function finishRecording() {
     if (!isRecording) return;
     isRecording = false;
-
     talkBtn.classList.remove('recording');
     talkBtn.querySelector('.btn-text').textContent = '长按说话';
-
-    if (useXfyun) {
-      stopXF();
-    } else {
-      stopWS();
-    }
+    if (useXfyun) { stopXF(); } else { stopWS(); }
   }
 
   // =======================================================
@@ -354,13 +360,11 @@
 
   talkBtn.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
-  // --- 清空 ---
   clearBtn.addEventListener('click', function () {
     textContent.innerHTML = '<p class="placeholder-text">长按下方按钮说话<br>文字将显示在这里</p>';
     hasText = false;
   });
 
-  // --- Toast ---
   function showToast(msg) {
     var t = document.getElementById('toast');
     if (!t) {
