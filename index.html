@@ -93,7 +93,7 @@ body { background: #1a1a2e; color: #ffffff; }
     <div class="toolbar">
       <div class="toolbar-left">
         <span class="app-name">语音转大字</span>
-        <span class="app-ver" id="verLabel">v21</span>
+        <span class="app-ver" id="verLabel">v22</span>
       </div>
       <div class="toolbar-right">
         <button id="fontDown" class="icon-btn" title="缩小字体">A-</button>
@@ -242,7 +242,7 @@ var XfyunASR = (function () {
       isFirstFrame = false;
       ws.send(JSON.stringify({
         common: { app_id: CFG.appId },
-        business: { language: 'zh_cn', domain: 'iat', accent: 'mandarin', ptt: 0 },
+        business: { language: 'zh_cn', domain: 'iat', accent: 'mandarin', ptt: 0, dwa: 'wpgs', vad_eos: 10000 },
         data: { status: 0, format: 'audio/L16;rate=16000', encoding: 'raw', audio: b64 }
       }));
       return;
@@ -371,7 +371,7 @@ var XfyunASR = (function () {
 (function () {
   'use strict';
 
-  var VER = 'v21';
+  var VER = 'v22';
   var talkBtn = document.getElementById('talkBtn');
   var textContent = document.getElementById('textContent');
   var textDisplay = document.getElementById('textDisplay');
@@ -403,14 +403,18 @@ var XfyunASR = (function () {
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   var hasXfyun = (typeof XfyunASR !== 'undefined') && XfyunASR.isSupported();
 
+  var savedEngine = null;
+  try { savedEngine = localStorage.getItem('voice_engine'); } catch (e) {}
+
   function updateVerLabel() {
     var engine = useXfyun ? '讯飞' : (SR ? '默认' : '无');
     verLabel.textContent = VER + ' [' + engine + ']';
   }
-  updateVerLabel();
 
-  if (!SR && !hasXfyun) { unsupportedModal.classList.remove('hidden'); return; }
-  if (!SR && hasXfyun) { useXfyun = true; updateVerLabel(); }
+  if (!SR && !hasXfyun) { unsupportedModal.classList.remove('hidden'); updateVerLabel(); return; }
+  if (!SR && hasXfyun) { useXfyun = true; }
+  else if (savedEngine === 'xfyun' && hasXfyun) { useXfyun = true; }
+  updateVerLabel();
 
   function applyFontSize() { textContent.style.fontSize = FONT_SIZES[fontIndex] + 'vw'; }
   applyFontSize();
@@ -526,6 +530,7 @@ var XfyunASR = (function () {
 
   function switchToXfyun() {
     useXfyun = true;
+    try { localStorage.setItem('voice_engine', 'xfyun'); } catch (e) {}
     updateVerLabel();
     if (recognition) { try { recognition.abort(); } catch (e) {} recognition = null; }
     pendingFinalize = false;
@@ -565,6 +570,7 @@ var XfyunASR = (function () {
   function wsOnResult(event) {
     if (!isRecording && !pendingFinalize) return;
     wsEverWorked = true;
+    try { localStorage.setItem('voice_engine', 'ws'); } catch (e) {}
     for (var i = event.resultIndex; i < event.results.length; i++) {
       var r = event.results[i];
       sessionSegments[i] = { text: (r[0] && r[0].transcript) || '', isFinal: !!r.isFinal };
@@ -628,7 +634,7 @@ var XfyunASR = (function () {
     try {
       recognition.start();
     } catch (e) {
-      if (hasXfyun) { useXfyun = true; updateVerLabel(); startXF(); showToast('已切换识别引擎'); }
+      if (hasXfyun) { useXfyun = true; try { localStorage.setItem('voice_engine', 'xfyun'); } catch (e) {} updateVerLabel(); startXF(); showToast('已切换识别引擎'); }
       else { resetUI(); showToast('启动失败，请重试'); }
     }
   }
@@ -690,6 +696,7 @@ var XfyunASR = (function () {
     pendingFinalize = false;
     talkBtn.classList.add('recording');
     talkBtn.querySelector('.btn-text').textContent = '松开结束';
+    playTone(440, 880, 100);
     if (useXfyun) startXF(); else startWS();
   }
 
@@ -698,6 +705,7 @@ var XfyunASR = (function () {
     isRecording = false;
     talkBtn.classList.remove('recording');
     talkBtn.querySelector('.btn-text').textContent = '长按说话';
+    playTone(880, 440, 100);
     if (useXfyun) stopXF(); else stopWS();
   }
 
@@ -718,6 +726,22 @@ var XfyunASR = (function () {
     textContent.innerHTML = '<p class="placeholder-text">长按下方按钮说话<br>文字将显示在这里</p>';
     hasText = false;
   });
+
+  var toneCtx = null;
+  function playTone(f1, f2, ms) {
+    try {
+      if (!toneCtx) toneCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (toneCtx.state === 'suspended') toneCtx.resume();
+      var osc = toneCtx.createOscillator();
+      var gain = toneCtx.createGain();
+      osc.connect(gain); gain.connect(toneCtx.destination);
+      osc.frequency.setValueAtTime(f1, toneCtx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(f2, toneCtx.currentTime + ms / 1000);
+      gain.gain.setValueAtTime(0.15, toneCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, toneCtx.currentTime + ms / 1000);
+      osc.start(); osc.stop(toneCtx.currentTime + ms / 1000);
+    } catch (e) {}
+  }
 
   function showToast(msg) {
     var t = document.getElementById('toast');
