@@ -136,7 +136,7 @@ var XfyunASR = (function () {
       isFirstFrame = false;
       ws.send(JSON.stringify({
         common: { app_id: CFG.appId },
-        business: { language: 'zh_cn', domain: 'iat', accent: 'mandarin', ptt: 1 },
+        business: { language: 'zh_cn', domain: 'xfime-mianqie', accent: 'mandarin', ptt: 1 },
         data: { status: 0, format: 'audio/L16;rate=16000', encoding: 'raw', audio: b64 }
       }));
       return;
