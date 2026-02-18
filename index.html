@@ -93,7 +93,7 @@ body { background: #1a1a2e; color: #ffffff; }
     <div class="toolbar">
       <div class="toolbar-left">
         <span class="app-name">语音转大字</span>
-        <span class="app-ver" id="verLabel">v19</span>
+        <span class="app-ver" id="verLabel">v20</span>
       </div>
       <div class="toolbar-right">
         <button id="fontDown" class="icon-btn" title="缩小字体">A-</button>
@@ -146,6 +146,7 @@ var XfyunASR = (function () {
   var sendTimer = null, audioBuf = [], resultMap = {};
   var isFirstFrame = true, active = false, stopping = false;
   var cb = { onResult: null, onError: null, onEnd: null };
+  var gen = 0;
 
   function uint8ToBase64(arr) {
     var bin = '';
@@ -269,6 +270,18 @@ var XfyunASR = (function () {
     return text;
   }
 
+  function abort() {
+    active = false; stopping = false;
+    stopCapture();
+    if (sendTimer) { clearInterval(sendTimer); sendTimer = null; }
+    if (ws) {
+      ws.onmessage = null; ws.onerror = null; ws.onclose = null;
+      try { ws.close(); } catch (e) {}
+      ws = null;
+    }
+    cb.onResult = null; cb.onError = null; cb.onEnd = null;
+  }
+
   function cleanup() {
     var wasActive = active;
     active = false; stopping = false;
@@ -279,18 +292,27 @@ var XfyunASR = (function () {
   }
 
   function start(onResult, onError, onEnd) {
-    if (active) return Promise.resolve();
+    if (active) abort();
+
+    var myGen = ++gen;
     active = true; stopping = false; isFirstFrame = true;
     resultMap = {}; audioBuf = [];
     cb.onResult = onResult; cb.onError = onError; cb.onEnd = onEnd;
 
     return startCapture().then(function () {
+      if (myGen !== gen) return;
       return getAuthUrl();
     }).then(function (url) {
+      if (myGen !== gen || !url) return;
       return new Promise(function (resolve, reject) {
         ws = new WebSocket(url);
-        ws.onopen = function () { sendTimer = setInterval(sendFrame, 40); resolve(); };
+        ws.onopen = function () {
+          if (myGen !== gen) { try { ws.close(); } catch (e) {} return; }
+          sendTimer = setInterval(sendFrame, 40);
+          resolve();
+        };
         ws.onmessage = function (e) {
+          if (myGen !== gen) return;
           var resp;
           try { resp = JSON.parse(e.data); } catch (err) { return; }
           if (resp.code !== 0) {
@@ -306,10 +328,17 @@ var XfyunASR = (function () {
           }
           if (resp.data && resp.data.status === 2) cleanup();
         };
-        ws.onerror = function () { reject(new Error('讯飞连接失败')); };
-        ws.onclose = function () { if (active) cleanup(); };
+        ws.onerror = function () {
+          if (myGen !== gen) return;
+          reject(new Error('讯飞连接失败'));
+        };
+        ws.onclose = function () {
+          if (myGen !== gen) return;
+          if (active) cleanup();
+        };
       });
     }).catch(function (err) {
+      if (myGen !== gen) return;
       if (cb.onError) cb.onError('讯飞启动失败: ' + (err.message || err));
       cleanup();
     });
@@ -337,7 +366,7 @@ var XfyunASR = (function () {
 (function () {
   'use strict';
 
-  var VER = 'v19';
+  var VER = 'v20';
   var talkBtn = document.getElementById('talkBtn');
   var textContent = document.getElementById('textContent');
   var textDisplay = document.getElementById('textDisplay');
@@ -361,6 +390,7 @@ var XfyunASR = (function () {
   var sessionSegments = [];
   var xfText = '';
   var xfHadError = false;
+  var xfStopTimer = null;
 
   var FONT_SIZES = [5, 6, 7, 8, 10, 12, 14];
   var fontIndex = 3;
@@ -616,12 +646,15 @@ var XfyunASR = (function () {
   // =======================================================
 
   function startXF() {
+    if (xfStopTimer) { clearTimeout(xfStopTimer); xfStopTimer = null; }
     xfText = '';
     xfHadError = false;
+    pendingFinalize = false;
     XfyunASR.start(
       function (text) { xfText = text; if (text) showSessionText(text); },
       function (msg) { xfHadError = true; showToast(msg || '识别出错'); },
       function () {
+        if (xfStopTimer) { clearTimeout(xfStopTimer); xfStopTimer = null; }
         commitSession(xfText);
         resetUI();
         if (!hasText && !xfHadError) showToast('未检测到语音，请重试');
@@ -632,13 +665,14 @@ var XfyunASR = (function () {
   function stopXF() {
     pendingFinalize = true;
     XfyunASR.stop();
-    setTimeout(function () {
+    xfStopTimer = setTimeout(function () {
+      xfStopTimer = null;
       if (pendingFinalize) {
         commitSession(xfText);
         resetUI();
         if (!hasText && !xfHadError) showToast('识别超时，请重试');
       }
-    }, 8000);
+    }, 4000);
   }
 
   // =======================================================
