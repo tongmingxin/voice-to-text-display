@@ -34,7 +34,8 @@ body { background: #1a1a2e; color: #ffffff; }
 }
 .toolbar-left, .toolbar-right { display: flex; align-items: center; gap: 6px; }
 .app-name { font-size: 0.95rem; font-weight: 600; color: rgba(255,255,255,0.7); }
-.app-ver { font-size: 0.6rem; color: rgba(255,255,255,0.25); margin-left: 6px; }
+.app-ver { font-size: 0.6rem; color: rgba(255,255,255,0.25); margin-left: 6px; cursor: pointer; -webkit-tap-highlight-color: transparent; padding: 4px 6px; border-radius: 4px; }
+.app-ver:active { background: rgba(255,255,255,0.1); }
 .icon-btn {
   border: none; background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.75);
   padding: 5px 10px; border-radius: 14px; font-size: 0.78rem; cursor: pointer;
@@ -93,7 +94,7 @@ body { background: #1a1a2e; color: #ffffff; }
     <div class="toolbar">
       <div class="toolbar-left">
         <span class="app-name">语音转大字</span>
-        <span class="app-ver" id="verLabel">v22</span>
+        <span class="app-ver" id="verLabel">v23</span>
       </div>
       <div class="toolbar-right">
         <button id="fontDown" class="icon-btn" title="缩小字体">A-</button>
@@ -371,7 +372,7 @@ var XfyunASR = (function () {
 (function () {
   'use strict';
 
-  var VER = 'v22';
+  var VER = 'v23';
   var talkBtn = document.getElementById('talkBtn');
   var textContent = document.getElementById('textContent');
   var textDisplay = document.getElementById('textDisplay');
@@ -415,6 +416,17 @@ var XfyunASR = (function () {
   if (!SR && hasXfyun) { useXfyun = true; }
   else if (savedEngine === 'xfyun' && hasXfyun) { useXfyun = true; }
   updateVerLabel();
+
+  verLabel.addEventListener('click', function () {
+    if (isRecording) return;
+    if (!SR) { showToast('此设备仅支持讯飞引擎'); return; }
+    useXfyun = !useXfyun;
+    if (!useXfyun && !SR) { useXfyun = true; }
+    try { localStorage.setItem('voice_engine', useXfyun ? 'xfyun' : 'ws'); } catch (e) {}
+    updateVerLabel();
+    wsAttempts = 0; wsEverWorked = false;
+    showToast(useXfyun ? '已切换为讯飞引擎' : '已切换为默认引擎');
+  });
 
   function applyFontSize() { textContent.style.fontSize = FONT_SIZES[fontIndex] + 'vw'; }
   applyFontSize();
@@ -530,7 +542,6 @@ var XfyunASR = (function () {
 
   function switchToXfyun() {
     useXfyun = true;
-    try { localStorage.setItem('voice_engine', 'xfyun'); } catch (e) {}
     updateVerLabel();
     if (recognition) { try { recognition.abort(); } catch (e) {} recognition = null; }
     pendingFinalize = false;
@@ -634,7 +645,7 @@ var XfyunASR = (function () {
     try {
       recognition.start();
     } catch (e) {
-      if (hasXfyun) { useXfyun = true; try { localStorage.setItem('voice_engine', 'xfyun'); } catch (e) {} updateVerLabel(); startXF(); showToast('已切换识别引擎'); }
+      if (hasXfyun) { useXfyun = true; updateVerLabel(); startXF(); showToast('已切换识别引擎'); }
       else { resetUI(); showToast('启动失败，请重试'); }
     }
   }
@@ -662,7 +673,11 @@ var XfyunASR = (function () {
     xfHadError = false;
     pendingFinalize = false;
     XfyunASR.start(
-      function (text) { xfText = text; showSessionText(text || ''); },
+      function (text) {
+        xfText = text;
+        if (text) { try { localStorage.setItem('voice_engine', 'xfyun'); } catch (e) {} }
+        showSessionText(text || '');
+      },
       function (msg) { xfHadError = true; showToast(msg || '识别出错'); },
       function () {
         if (xfStopTimer) { clearTimeout(xfStopTimer); xfStopTimer = null; }
